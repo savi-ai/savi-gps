@@ -1,100 +1,117 @@
-import React, { useState } from 'react';
-import { Container, Grid, Paper, Typography, Box, FormControlLabel, Checkbox, TextField, Button, CircularProgress, Radio, RadioGroup, InputLabel, Select, MenuItem, FormControl } from '@mui/material';
-import { CloudUpload as CloudUploadIcon, Storage as StorageIcon, Build as BuildIcon, Psychology as PsychologyIcon } from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+import { 
+  Container, 
+  Grid, 
+  Paper, 
+  Typography, 
+  Box, 
+  TextField, 
+  Button, 
+  FormControlLabel, 
+  Checkbox, 
+  FormControl, 
+  InputLabel, 
+  Select, 
+  MenuItem, 
+  Radio, 
+  RadioGroup, 
+  CircularProgress,
+  Alert
+} from '@mui/material';
+import { CloudUpload as CloudUploadIcon } from '@mui/icons-material';
+import { useLocation } from 'react-router-dom';
+import DynamicForm from './DynamicForm';
 import ResponseDisplay from './ResponseDisplay';
+import ConfirmationDialog from './ConfirmationDialog';
 import formConfig from '../config/generic-formConfig.json';
 
 function DeveloperPage() {
+  const location = useLocation();
+  const isUploadMode = location.pathname === '/developer/upload';
+  
+  // State variables
   const [response, setResponse] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Upload mode states
   const [isVector, setIsVector] = useState(false);
-  const [topK, setTopK] = useState(5);
-  const [chunkSize, setChunkSize] = useState(1000);
-  const [overlap, setOverlap] = useState(200);
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(1000);
-  const [useSelfCritic, setUseSelfCritic] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [chunkSize, setChunkSize] = useState('1000');
+  const [overlap, setOverlap] = useState('200');
   const [usecaseId, setUsecaseId] = useState('');
-  const [documentSource, setDocumentSource] = useState('upload'); // 'upload' or 's3'
+  const [documentSource, setDocumentSource] = useState('upload');
+  const [uploadedFiles, setUploadedFiles] = useState([]);
   const [s3Config, setS3Config] = useState({
     bucketName: '',
-    region: '',
-    prefix: ''
+    region: 'us-east-1'
   });
+
+  // Test mode states
+  const [topK, setTopK] = useState('5');
+  const [temperature, setTemperature] = useState('0.7');
+  const [maxTokens, setMaxTokens] = useState('1000');
+  const [useSelfCritic, setUseSelfCritic] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState('');
   const [selectedTools, setSelectedTools] = useState([]);
-  const [selectedAgents, setSelectedAgents] = useState([]);
+  const [isAgentic, setIsAgentic] = useState(false);
+  const [selectedAgenticType, setSelectedAgenticType] = useState('');
+  const [useApiCall, setUseApiCall] = useState(false);
+  const [apiConfig, setApiConfig] = useState({
+    url: '',
+    method: 'GET',
+    body: '',
+    headers: ''
+  });
+  const [subMode, setSubMode] = useState('test');
   const [query, setQuery] = useState('');
-  const [mainMode, setMainMode] = useState('upload'); // 'upload' or 'run'
-  const [subMode, setSubMode] = useState('test'); // 'test' or 'evaluation' (only for run mode)
-  const [evaluationData, setEvaluationData] = useState([]);
   const [csvFile, setCsvFile] = useState(null);
+  const [evaluationData, setEvaluationData] = useState([]);
+  const [showConfirmation, setShowConfirmation] = useState(false);
 
-  // Available tools
-  const availableTools = [
-    { id: 'vin_search', name: 'VIN Search', description: 'Use the VINteligence API to search vehicle information' },
-    { id: 'carfax', name: 'CARFAX', description: 'Find the Date of First Use (DOFU) from CARFAX database' },
-    { id: 'cims', name: 'CIMS', description: 'Access Claims database API for vehicle claims information' },
-    { id: 'ihost', name: 'Ihost', description: 'Access Contract data APIs for vehicle contract information' }
+  // Available tools and agentic types
+  const tools = [
+    { id: 'vin_search', name: 'VIN Search' },
+    { id: 'carfax', name: 'CARFAX' },
+    { id: 'cims', name: 'CIMS' },
+    { id: 'ihost', name: 'Ihost' }
   ];
 
-  // Available agents
-  const availableAgents = [
-    { id: 'self_critic', name: 'Self Critic', description: 'Enable self-criticism to improve response quality and accuracy' },
-    { id: 'fact_checker', name: 'Fact Checker', description: 'Verify facts and cross-reference information with reliable sources' },
-    { id: 'context_analyzer', name: 'Context Analyzer', description: 'Analyze context and maintain conversation coherence' },
-    { id: 'reasoning_agent', name: 'Reasoning Agent', description: 'Apply logical reasoning and step-by-step problem solving' },
-    { id: 'summarization_agent', name: 'Summarization Agent', description: 'Create concise summaries of complex information' },
-    { id: 'query_optimizer', name: 'Query Optimizer', description: 'Optimize search queries for better retrieval results' }
+  const agenticTypes = [
+    { id: 'self_critic', name: 'Self Critic' },
+    { id: 'query_optimizer', name: 'Query Optimizer' },
+    { id: 'react', name: 'ReAct' },
+    { id: 'context_analyzer', name: 'Context Analyzer' },
+    { id: 'response_validator', name: 'Response Validator' }
   ];
 
-  const handleToolToggle = (toolId) => {
-    setSelectedTools(prev => 
-      prev.includes(toolId) 
-        ? prev.filter(id => id !== toolId)
-        : [...prev, toolId]
-    );
+  const handleFileUpload = (event) => {
+    const files = Array.from(event.target.files);
+    setUploadedFiles([...uploadedFiles, ...files]);
   };
 
-  const handleAgentToggle = (agentId) => {
-    setSelectedAgents(prev => 
-      prev.includes(agentId) 
-        ? prev.filter(id => id !== agentId)
-        : [...prev, agentId]
-    );
+  const removeFile = (index) => {
+    const newFiles = uploadedFiles.filter((_, i) => i !== index);
+    setUploadedFiles(newFiles);
   };
 
   const handleCsvUpload = (event) => {
     const file = event.target.files[0];
-    if (file && file.type === 'text/csv') {
+    if (file) {
       setCsvFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
-        const csv = e.target.result;
-        const lines = csv.split('\n');
-        const headers = lines[0].split(',').map(h => h.trim());
-        
-        // Validate headers
-        if (!headers.includes('query') || !headers.includes('answer')) {
-          alert('CSV must contain "query" and "answer" columns');
-          setCsvFile(null);
-          return;
-        }
-        
+        const text = e.target.result;
+        const lines = text.split('\n');
+        const headers = lines[0].split(',');
         const data = lines.slice(1).filter(line => line.trim()).map(line => {
-          const values = line.split(',').map(v => v.trim());
+          const values = line.split(',');
           return {
-            query: values[headers.indexOf('query')] || '',
-            answer: values[headers.indexOf('answer')] || ''
+            query: values[0]?.trim() || '',
+            answer: values[1]?.trim() || ''
           };
         });
-        
         setEvaluationData(data);
       };
       reader.readAsText(file);
-    } else {
-      alert('Please upload a valid CSV file');
     }
   };
 
@@ -103,49 +120,43 @@ function DeveloperPage() {
     setEvaluationData([]);
   };
 
-  const handleFileUpload = (event) => {
-    const files = Array.from(event.target.files);
-    const pdfFiles = files.filter(file => file.type === 'application/pdf');
-    setUploadedFiles(prev => [...prev, ...pdfFiles]);
-  };
-
-  const removeFile = (index) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleS3ConfigChange = (field, value) => {
-    setS3Config(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
   const handleSubmit = async () => {
     // Validation for Upload mode
-    if (mainMode === 'upload') {
+    if (isUploadMode) {
       if (!usecaseId.trim()) {
         alert('Please enter a Use Case ID');
         return;
       }
       if (documentSource === 'upload' && uploadedFiles.length === 0) {
-        alert('Please upload at least one document');
+        alert('Please upload at least one PDF file');
         return;
       }
-      if (documentSource === 's3' && (!s3Config.bucketName || !s3Config.region)) {
-        alert('Please provide S3 bucket name and region');
+      if (documentSource === 's3' && !s3Config.bucketName.trim()) {
+        alert('Please enter S3 bucket name');
         return;
       }
     }
 
-    // Validation for Run mode
-    if (mainMode === 'run') {
+    // Validation for Test mode
+    if (!isUploadMode) {
+      if (!usecaseId.trim()) {
+        alert('Please enter a Use Case ID');
+        return;
+      }
       if (subMode === 'test' && !query.trim()) {
         alert('Please enter a query');
         return;
       }
-
       if (subMode === 'evaluation' && evaluationData.length === 0) {
         alert('Please upload a CSV file with test data');
+        return;
+      }
+      if (isAgentic && !selectedAgenticType) {
+        alert('Please select an Agentic type when Agentic mode is enabled');
+        return;
+      }
+      if (isAgentic && useApiCall && !apiConfig.url.trim()) {
+        alert('Please enter API URL when API call is enabled');
         return;
       }
     }
@@ -154,47 +165,31 @@ function DeveloperPage() {
       setIsLoading(true);
       setResponse(null);
 
-      // Create FormData for file upload or S3 configuration
       const formDataToSend = new FormData();
-      
-      // Add main mode
-      formDataToSend.append('mainMode', mainMode);
-      
-      if (mainMode === 'upload') {
-        // Upload mode - send document upload data
+      formDataToSend.append('mainMode', isUploadMode ? 'upload' : 'run');
+
+      if (isUploadMode) {
+        // Upload mode
         formDataToSend.append('usecaseId', usecaseId);
-        
-        // Create llmParameters object for upload
-        const llmParameters = {
-          isVector,
-          chunkSize: isVector ? chunkSize : undefined,
-          overlap: isVector ? overlap : undefined
+        const llmParameters = { 
+          isVector, 
+          chunkSize: isVector ? chunkSize : undefined, 
+          overlap: isVector ? overlap : undefined 
         };
         formDataToSend.append('llmParameters', JSON.stringify(llmParameters));
         
-        // Add document source configuration
         if (documentSource === 'upload') {
-          // Add uploaded files
           uploadedFiles.forEach((file, index) => {
-            formDataToSend.append('attachments', file);
+            formDataToSend.append(`file_${index}`, file);
           });
-          formDataToSend.append('documentSource', 'upload');
         } else {
-          // Add S3 configuration
-          formDataToSend.append('documentSource', 's3');
           formDataToSend.append('s3Config', JSON.stringify(s3Config));
         }
         
-        // Use upload endpoint
         const endpoint = formConfig.uploadApiEndpoint || formConfig.apiEndpoint;
-        
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          body: formDataToSend,
-        });
+        const response = await fetch(endpoint, { method: 'POST', body: formDataToSend });
         const data = await response.json();
         setResponse(data);
-        
       } else {
         // Run mode - send query/evaluation data
         formDataToSend.append('subMode', subMode);
@@ -210,710 +205,611 @@ function DeveloperPage() {
             formDataToSend.append('csvFile', csvFile);
           }
         }
-        
-        // Create llmParameters object for run mode
-        const llmParameters = {
-          isVector,
-          topK: isVector ? topK : undefined,
-          temperature: parseFloat(temperature),
-          maxTokens: parseInt(maxTokens),
-          useSelfCritic: selectedAgents.includes('self_critic')
+
+        const llmParameters = { 
+          isVector, 
+          topK: isVector ? topK : undefined, 
+          temperature: parseFloat(temperature), 
+          maxTokens: parseInt(maxTokens), 
+          useSelfCritic: isAgentic && selectedAgenticType === 'self_critic'
         };
         formDataToSend.append('llmParameters', JSON.stringify(llmParameters));
-        
-        // Add system prompt
         formDataToSend.append('systemPrompt', systemPrompt);
         
-        // Add selected tools as JSON string
-        formDataToSend.append('tools', JSON.stringify(selectedTools));
+        // Add tools - include API call if selected in Agentic mode
+        const toolsToSend = [];
+        if (isAgentic && useApiCall) {
+          toolsToSend.push('api_call');
+        }
+        formDataToSend.append('tools', JSON.stringify(toolsToSend));
         
-        // Add selected agents as JSON string
-        formDataToSend.append('agents', JSON.stringify(selectedAgents));
+        // Add Agentic configuration
+        if (isAgentic) {
+          formDataToSend.append('agenticConfig', JSON.stringify({
+            enabled: true,
+            type: selectedAgenticType,
+            useApiCall: useApiCall,
+            apiConfig: useApiCall ? apiConfig : null
+          }));
+        } else {
+          formDataToSend.append('agenticConfig', JSON.stringify({
+            enabled: false
+          }));
+        }
 
-        // Determine endpoint based on sub mode
         let endpoint;
         if (subMode === 'evaluation') {
           endpoint = formConfig.runEvaluationsApiEndpoint || formConfig.apiEndpoint;
         } else {
-          // test mode
           endpoint = formConfig.testApiEndpoint || formConfig.apiEndpoint;
         }
-
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          body: formDataToSend,
-        });
+        const response = await fetch(endpoint, { method: 'POST', body: formDataToSend });
         const data = await response.json();
         setResponse(data);
       }
     } catch (error) {
-      setResponse({
-        status: 'error',
-        message: 'Failed to submit form: ' + error.message,
-        timestamp: new Date().toISOString()
-      });
+      console.error('Error submitting form:', error);
+      setResponse({ error: 'An error occurred while processing your request.' });
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom align="center">
-        Developer RAG Application
-      </Typography>
-      
-      {/* Main Mode Selection - Full Width at Top */}
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Mode Selection
-        </Typography>
-        <RadioGroup
-          value={mainMode}
-          onChange={(e) => setMainMode(e.target.value)}
-          sx={{ mb: 2 }}
-        >
-          <FormControlLabel
-            value="upload"
-            control={<Radio />}
-            label="Upload Mode - Upload Documents and Configure Model"
-          />
-          <FormControlLabel
-            value="run"
-            control={<Radio />}
-            label="Run Mode - Test or Evaluate the Model"
-          />
-        </RadioGroup>
-        <Typography variant="body2" color="text.secondary">
-          {mainMode === 'upload' 
-            ? 'Upload mode allows you to upload documents and set up the AI model.'
-            : 'Run mode allows you to test the AI model or evaluate its performance.'
-          }
-        </Typography>
-      </Paper>
+  const handleConfirmEvaluation = () => {
+    setShowConfirmation(false);
+    handleSubmit();
+  };
 
-      {/* Upload Mode Sections */}
-      {mainMode === 'upload' && (
-        <>
-          {/* Vectorization Parameters and Upload Documentation - Side by Side */}
-          <Grid container spacing={3} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  Vectorization Parameters
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={!isVector}
-                        onChange={(e) => setIsVector(!e.target.checked)}
-                      />
-                    }
-                    label="Full PDF"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={isVector}
-                        onChange={(e) => setIsVector(e.target.checked)}
-                      />
-                    }
-                    label="Vector"
-                  />
-                </Box>
-                {isVector && (
-                  <>
+  return (
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Typography variant="h4" gutterBottom sx={{ mb: 4, fontWeight: 'bold', color: '#1976d2' }}>
+        {isUploadMode ? 'Upload Data' : 'Test'}
+      </Typography>
+
+      {/* Upload Data Content */}
+      {isUploadMode && (
+        <Box>
+          {/* Vectorization Parameters */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Vectorization Parameters
+            </Typography>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={isVector}
+                      onChange={(e) => setIsVector(e.target.checked)}
+                    />
+                  }
+                  label="Vector"
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={!isVector}
+                      onChange={(e) => setIsVector(!e.target.checked)}
+                    />
+                  }
+                  label="Full PDF"
+                />
+              </Grid>
+              {isVector && (
+                <>
+                  <Grid item xs={12} md={3}>
                     <TextField
                       label="Chunk Size"
                       type="number"
                       value={chunkSize}
-                      onChange={(e) => setChunkSize(parseInt(e.target.value) || 1000)}
+                      onChange={(e) => setChunkSize(e.target.value)}
                       fullWidth
-                      margin="normal"
-                      inputProps={{ min: 1, max: 4000 }}
+                      helperText="Size of text chunks for vectorization"
                     />
+                  </Grid>
+                  <Grid item xs={12} md={3}>
                     <TextField
                       label="Overlap"
                       type="number"
                       value={overlap}
-                      onChange={(e) => setOverlap(parseInt(e.target.value) || 200)}
+                      onChange={(e) => setOverlap(e.target.value)}
                       fullWidth
-                      margin="normal"
-                      inputProps={{ min: 1, max: 1000 }}
+                      helperText="Overlap between chunks"
                     />
-                  </>
-                )}
-              </Paper>
+                  </Grid>
+                </>
+              )}
             </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  Upload Documentation
-                </Typography>
-                
-                <TextField
-                  label="Use Case ID"
-                  value={usecaseId}
-                  onChange={(e) => setUsecaseId(e.target.value)}
-                  fullWidth
-                  margin="normal"
-                  placeholder="Enter a unique identifier for this use case"
-                  helperText="This ID will be associated with the uploaded documents"
-                  sx={{ mb: 3 }}
-                />
-                
-                <RadioGroup
-                  value={documentSource}
-                  onChange={(e) => setDocumentSource(e.target.value)}
-                  sx={{ mb: 3 }}
-                >
-                  <FormControlLabel
-                    value="upload"
-                    control={<Radio />}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <CloudUploadIcon />
-                        Upload PDF Documents
-                      </Box>
-                    }
-                  />
-                  <FormControlLabel
-                    value="s3"
-                    control={<Radio />}
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <StorageIcon />
-                        Use Documents from S3
-                      </Box>
-                    }
-                  />
-                </RadioGroup>
+          </Paper>
 
-                {documentSource === 'upload' && (
-                  <Box>
-                    <Box sx={{ mb: 2 }}>
-                      <input
-                        accept=".pdf"
-                        style={{ display: 'none' }}
-                        id="pdf-upload"
-                        multiple
-                        type="file"
-                        onChange={handleFileUpload}
-                      />
-                      <label htmlFor="pdf-upload">
+          {/* Upload Documentation */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Upload Documentation
+            </Typography>
+            
+            <TextField
+              label="Use Case ID"
+              value={usecaseId}
+              onChange={(e) => setUsecaseId(e.target.value)}
+              fullWidth
+              margin="normal"
+              placeholder="Enter a unique identifier for this use case"
+              helperText="This ID will be used to identify your documents"
+              sx={{ mb: 3 }}
+            />
+
+            <Typography variant="subtitle1" gutterBottom>
+              Document Source:
+            </Typography>
+            <RadioGroup
+              value={documentSource}
+              onChange={(e) => setDocumentSource(e.target.value)}
+              row
+              sx={{ mb: 3 }}
+            >
+              <FormControlLabel
+                value="upload"
+                control={<Radio />}
+                label="Upload Files"
+              />
+              <FormControlLabel
+                value="s3"
+                control={<Radio />}
+                label="S3 Bucket"
+              />
+            </RadioGroup>
+
+            {documentSource === 'upload' ? (
+              <Box>
+                <input
+                  accept=".pdf"
+                  style={{ display: 'none' }}
+                  id="file-upload"
+                  type="file"
+                  multiple
+                  onChange={handleFileUpload}
+                />
+                <label htmlFor="file-upload">
+                  <Button
+                    variant="outlined"
+                    component="span"
+                    startIcon={<CloudUploadIcon />}
+                    sx={{ mb: 2 }}
+                  >
+                    Upload PDF Files
+                  </Button>
+                </label>
+                
+                {uploadedFiles.length > 0 && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Uploaded Files:
+                    </Typography>
+                    {uploadedFiles.map((file, index) => (
+                      <Box
+                        key={index}
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          p: 1,
+                          mb: 1,
+                          border: '1px solid #e0e0e0',
+                          borderRadius: 1,
+                          backgroundColor: '#f5f5f5'
+                        }}
+                      >
+                        <Typography variant="body2">{file.name}</Typography>
                         <Button
-                          variant="outlined"
-                          component="span"
-                          startIcon={<CloudUploadIcon />}
-                          sx={{ mb: 2 }}
+                          size="small"
+                          color="error"
+                          onClick={() => removeFile(index)}
                         >
-                          Upload PDF Documents
+                          Remove
                         </Button>
-                      </label>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Upload PDF documents to be processed. Multiple files can be selected.
-                      </Typography>
-                    </Box>
-                    
-                    {/* Display uploaded files */}
-                    {uploadedFiles.length > 0 && (
-                      <Box>
-                        <Typography variant="subtitle2" gutterBottom>
-                          Uploaded Files ({uploadedFiles.length}):
-                        </Typography>
-                        {uploadedFiles.map((file, index) => (
-                          <Box
-                            key={index}
-                            sx={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              p: 1,
-                              mb: 1,
-                              border: '1px solid #e0e0e0',
-                              borderRadius: 1,
-                              backgroundColor: '#f5f5f5'
-                            }}
-                          >
-                            <Typography variant="body2" sx={{ flex: 1 }}>
-                              {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                            </Typography>
-                            <Button
-                              size="small"
-                              color="error"
-                              onClick={() => removeFile(index)}
-                            >
-                              Remove
-                            </Button>
-                          </Box>
-                        ))}
                       </Box>
-                    )}
+                    ))}
                   </Box>
                 )}
-
-                {documentSource === 's3' && (
-                  <Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Configure S3 bucket details to access documents stored in AWS S3.
-                    </Typography>
-                    
+              </Box>
+            ) : (
+              <Box>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
                     <TextField
                       label="S3 Bucket Name"
                       value={s3Config.bucketName}
-                      onChange={(e) => handleS3ConfigChange('bucketName', e.target.value)}
+                      onChange={(e) => setS3Config({...s3Config, bucketName: e.target.value})}
                       fullWidth
                       margin="normal"
-                      required
-                      placeholder="my-documents-bucket"
+                      placeholder="Enter S3 bucket name"
                     />
-                    
-                    <FormControl fullWidth margin="normal" required>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth margin="normal">
                       <InputLabel>AWS Region</InputLabel>
                       <Select
                         value={s3Config.region}
-                        onChange={(e) => handleS3ConfigChange('region', e.target.value)}
+                        onChange={(e) => setS3Config({...s3Config, region: e.target.value})}
                         label="AWS Region"
                       >
                         <MenuItem value="us-east-1">us-east-1</MenuItem>
                         <MenuItem value="us-west-2">us-west-2</MenuItem>
                       </Select>
                     </FormControl>
-                    
-                    <TextField
-                      label="S3 Prefix (Optional)"
-                      value={s3Config.prefix}
-                      onChange={(e) => handleS3ConfigChange('prefix', e.target.value)}
-                      fullWidth
-                      margin="normal"
-                      placeholder="documents/pdf/"
-                      helperText="Optional prefix to filter documents in the bucket"
-                    />
-                  </Box>
-                )}
-              </Paper>
-            </Grid>
-          </Grid>
-          
-          {/* Submit Button for Upload Mode */}
-          <Paper sx={{ p: 3, mb: 3 }}>
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <Button
-                variant="contained"
-                onClick={handleSubmit}
-                disabled={isLoading || !usecaseId.trim() || 
-                  (documentSource === 'upload' && uploadedFiles.length === 0) ||
-                  (documentSource === 's3' && (!s3Config.bucketName || !s3Config.region))}
-                sx={{ minWidth: 120 }}
-              >
-                {isLoading ? <CircularProgress size={20} /> : 'Upload Documents'}
-              </Button>
-            </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
           </Paper>
-        </>
+
+          {/* Submit Button for Upload */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+            <Button
+              variant="contained"
+              onClick={handleSubmit}
+              disabled={isLoading || !usecaseId.trim() || (documentSource === 'upload' ? uploadedFiles.length === 0 : !s3Config.bucketName.trim())}
+              sx={{ minWidth: 200 }}
+            >
+              {isLoading ? <CircularProgress size={20} /> : 'Upload Documents'}
+            </Button>
+          </Box>
+        </Box>
       )}
 
-      {/* Run Mode Sections */}
-      {mainMode === 'run' && (
-        <>
-          {/* Search Parameters and System Prompt for Run Mode */}
-          <Grid container spacing={3} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  Search Parameters
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={!isVector}
-                        onChange={(e) => setIsVector(!e.target.checked)}
-                      />
-                    }
-                    label="Full PDF"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={isVector}
-                        onChange={(e) => setIsVector(e.target.checked)}
-                      />
-                    }
-                    label="Vector"
-                  />
-                </Box>
-                {isVector && (
-                  <TextField
-                    label="Top K"
-                    type="number"
-                    value={topK}
-                    onChange={(e) => setTopK(parseInt(e.target.value) || 5)}
-                    fullWidth
-                    margin="normal"
-                    inputProps={{ min: 1, max: 100 }}
-                  />
-                )}
+      {/* Test Content */}
+      {!isUploadMode && (
+        <Box>
+          {/* Search Parameters */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Search Parameters
+            </Typography>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  label="Top K"
+                  type="number"
+                  value={topK}
+                  onChange={(e) => setTopK(e.target.value)}
+                  fullWidth
+                  helperText="Number of top results to retrieve"
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
                 <TextField
                   label="Temperature"
                   type="number"
                   value={temperature}
-                  onChange={(e) => setTemperature(parseFloat(e.target.value) || 0.7)}
+                  onChange={(e) => setTemperature(e.target.value)}
                   fullWidth
-                  margin="normal"
-                  inputProps={{ 
-                    min: 0, 
-                    max: 2, 
-                    step: 0.1 
-                  }}
-                  helperText="Controls randomness in the response (0.0 = deterministic, 2.0 = very random)"
+                  inputProps={{ min: 0, max: 2, step: 0.1 }}
+                  helperText="Controls randomness (0.0 = deterministic, 2.0 = very random)"
                 />
+              </Grid>
+              <Grid item xs={12} md={4}>
                 <TextField
                   label="Number of Tokens Generated"
                   type="number"
                   value={maxTokens}
-                  onChange={(e) => setMaxTokens(parseInt(e.target.value) || 1000)}
+                  onChange={(e) => setMaxTokens(e.target.value)}
                   fullWidth
-                  margin="normal"
-                  inputProps={{ 
-                    min: 1, 
-                    max: 4000 
-                  }}
-                  helperText="Maximum number of tokens to generate in the response"
+                  helperText="Maximum tokens to generate"
                 />
-              </Paper>
+              </Grid>
             </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  System Prompt
-                </Typography>
-                <TextField
-                  label="System Prompt"
-                  multiline
-                  rows={8}
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  fullWidth
-                  margin="normal"
-                  placeholder="Enter the system prompt that will guide the AI's behavior..."
-                  helperText="This prompt will be used to set the context and behavior for the AI model"
-                />
-              </Paper>
-            </Grid>
-          </Grid>
-        </>
-      )}
+          </Paper>
 
-      {/* Tools and Agents - Side by Side - Only show for Run mode */}
-      {mainMode === 'run' && (
-        <Grid container spacing={3} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 3, height: '100%' }}>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BuildIcon />
-                Tools
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Select the tools you want to enable for this request. Selected tools will be available to the AI model.
-              </Typography>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                {availableTools.map((tool) => (
-                  <Box
-                    key={tool.id}
-                    sx={{
-                      border: '1px solid #e0e0e0',
-                      borderRadius: 1,
-                      p: 2,
-                      backgroundColor: selectedTools.includes(tool.id) ? '#f0f8ff' : '#fafafa',
-                      transition: 'all 0.2s ease',
-                      cursor: 'pointer',
-                      '&:hover': {
-                        backgroundColor: selectedTools.includes(tool.id) ? '#e6f3ff' : '#f5f5f5',
-                        borderColor: '#1976d2'
-                      }
-                    }}
-                    onClick={() => handleToolToggle(tool.id)}
-                  >
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={selectedTools.includes(tool.id)}
-                          onChange={() => handleToolToggle(tool.id)}
-                          sx={{ mr: 1 }}
-                        />
-                      }
-                      label={
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                            {tool.name}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {tool.description}
-                          </Typography>
-                        </Box>
-                      }
-                      sx={{ margin: 0, width: '100%' }}
-                    />
-                  </Box>
-                ))}
-              </Box>
-              {selectedTools.length > 0 && (
-                <Typography variant="body2" color="primary" sx={{ mt: 2 }}>
-                  Selected tools: {selectedTools.length}
-                </Typography>
-              )}
-            </Paper>
-          </Grid>
-          
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 3, height: '100%' }}>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PsychologyIcon />
-                Agents
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Select the AI agents you want to enable for this request. These agents will enhance the processing and response quality.
-              </Typography>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                {availableAgents.map((agent) => (
-                  <Box
-                    key={agent.id}
-                    sx={{
-                      border: '1px solid #e0e0e0',
-                      borderRadius: 1,
-                      p: 2,
-                      backgroundColor: selectedAgents.includes(agent.id) ? '#fff3e0' : '#fafafa',
-                      transition: 'all 0.2s ease',
-                      cursor: 'pointer',
-                      '&:hover': {
-                        backgroundColor: selectedAgents.includes(agent.id) ? '#ffe0b2' : '#f5f5f5',
-                        borderColor: '#ff9800'
-                      }
-                    }}
-                    onClick={() => handleAgentToggle(agent.id)}
-                  >
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={selectedAgents.includes(agent.id)}
-                          onChange={() => handleAgentToggle(agent.id)}
-                          sx={{ mr: 1 }}
-                        />
-                      }
-                      label={
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                            {agent.name}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {agent.description}
-                          </Typography>
-                        </Box>
-                      }
-                      sx={{ margin: 0, width: '100%' }}
-                    />
-                  </Box>
-                ))}
-              </Box>
-              {selectedAgents.length > 0 && (
-                <Typography variant="body2" color="primary" sx={{ mt: 2 }}>
-                  Selected agents: {selectedAgents.length}
-                </Typography>
-              )}
-            </Paper>
-          </Grid>
-        </Grid>
-      )}
-
-      {/* Query/CSV Upload Section - Only show for Run mode */}
-      {mainMode === 'run' && (
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">
-              {subMode === 'test' ? 'Query' : 'Test Data Upload'}
+          {/* System Prompt */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              System Prompt
             </Typography>
-            <Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Run Mode:
-              </Typography>
-              <RadioGroup
-                value={subMode}
-                onChange={(e) => setSubMode(e.target.value)}
-                row
-              >
-                <FormControlLabel
-                  value="test"
-                  control={<Radio size="small" />}
-                  label="Test"
+            <TextField
+              label="System Prompt"
+              multiline
+              rows={4}
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              fullWidth
+              placeholder="Enter the system prompt that will guide the AI's behavior..."
+              helperText="This prompt sets the context and behavior for the AI assistant"
+            />
+          </Paper>
+
+          {/* Agentic Mode */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Agentic Mode
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Enable Agentic mode to use a custom agent for the query.
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={isAgentic}
+                  onChange={(e) => setIsAgentic(e.target.checked)}
                 />
-                <FormControlLabel
-                  value="evaluation"
-                  control={<Radio size="small" />}
-                  label="Evaluation"
-                />
-              </RadioGroup>
-            </Box>
-          </Box>
-          
-          {/* Use Case ID - Available for both Test and Evaluation */}
-          <TextField
-            label="Use Case ID"
-            value={usecaseId}
-            onChange={(e) => setUsecaseId(e.target.value)}
-            fullWidth
-            margin="normal"
-            placeholder="Enter the use case ID for the documents you want to query"
-            helperText="This ID should match the use case ID used when uploading documents"
-            sx={{ mb: 3 }}
-          />
-          
-          {subMode === 'test' ? (
-            <Box>
-              <TextField
-                label="Enter your query"
-                multiline
-                rows={4}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                fullWidth
-                margin="normal"
-                placeholder="Enter your question or query here..."
-                required
-              />
-            </Box>
-          ) : (
-            <Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Upload a CSV file with "query" and "answer" columns for batch evaluation.
-              </Typography>
-              
-              <input
-                accept=".csv"
-                style={{ display: 'none' }}
-                id="csv-upload"
-                type="file"
-                onChange={handleCsvUpload}
-              />
-              <label htmlFor="csv-upload">
-                <Button
-                  variant="outlined"
-                  component="span"
-                  startIcon={<CloudUploadIcon />}
-                  sx={{ mb: 2 }}
-                >
-                  Upload CSV File
-                </Button>
-              </label>
-              
-              {csvFile && (
-                <Box sx={{ mt: 2 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Uploaded CSV File:
-                  </Typography>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      p: 2,
-                      border: '1px solid #e0e0e0',
-                      borderRadius: 1,
-                      backgroundColor: '#f5f5f5'
-                    }}
+              }
+              label="Enable Agentic Mode"
+            />
+            {isAgentic && (
+              <>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
+                  Select Agentic Type:
+                </Typography>
+                <FormControl fullWidth margin="normal">
+                  <InputLabel>Agentic Type</InputLabel>
+                  <Select
+                    value={selectedAgenticType}
+                    onChange={(e) => setSelectedAgenticType(e.target.value)}
+                    label="Agentic Type"
                   >
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                        {csvFile.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {evaluationData.length} test cases loaded
-                      </Typography>
-                    </Box>
-                    <Button
-                      size="small"
-                      color="error"
-                      onClick={removeCsvFile}
-                    >
-                      Remove
-                    </Button>
-                  </Box>
-                  
-                  {evaluationData.length > 0 && (
-                    <Box sx={{ mt: 2 }}>
-                      <Typography variant="subtitle2" gutterBottom>
-                        Preview (first 3 rows):
-                      </Typography>
-                      <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
-                        {evaluationData.slice(0, 3).map((row, index) => (
-                          <Box
-                            key={index}
-                            sx={{
-                              p: 1,
-                              mb: 1,
-                              border: '1px solid #e0e0e0',
-                              borderRadius: 1,
-                              backgroundColor: '#fafafa'
-                            }}
+                    {agenticTypes.map((agenticType) => (
+                      <MenuItem key={agenticType.id} value={agenticType.id}>
+                        {agenticType.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 3, mb: 2 }}>
+                  Select tools for the agent to use:
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={useApiCall}
+                      onChange={(e) => setUseApiCall(e.target.checked)}
+                    />
+                  }
+                  label="API Call Tool - Allow agent to make external API calls"
+                />
+                
+                {useApiCall && (
+                  <Box sx={{ mt: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#f8f9fa' }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      API Call Tool Configuration:
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="API URL"
+                          value={apiConfig.url}
+                          onChange={(e) => setApiConfig({...apiConfig, url: e.target.value})}
+                          fullWidth
+                          margin="normal"
+                          placeholder="https://api.example.com/endpoint"
+                          required
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <FormControl fullWidth margin="normal">
+                          <InputLabel>Method</InputLabel>
+                          <Select
+                            value={apiConfig.method}
+                            onChange={(e) => setApiConfig({...apiConfig, method: e.target.value})}
+                            label="Method"
                           >
-                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                              Query: {row.query}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              Answer: {row.answer}
-                            </Typography>
-                          </Box>
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-                </Box>
-              )}
+                            <MenuItem value="GET">GET</MenuItem>
+                            <MenuItem value="POST">POST</MenuItem>
+                            <MenuItem value="PUT">PUT</MenuItem>
+                            <MenuItem value="DELETE">DELETE</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                    </Grid>
+                    
+                    <TextField
+                      label="Headers (JSON)"
+                      multiline
+                      rows={2}
+                      value={apiConfig.headers}
+                      onChange={(e) => setApiConfig({...apiConfig, headers: e.target.value})}
+                      fullWidth
+                      margin="normal"
+                      placeholder='{"Content-Type": "application/json", "Authorization": "Bearer token"}'
+                      helperText="Enter headers as JSON object"
+                    />
+                    
+                    {(apiConfig.method === 'POST' || apiConfig.method === 'PUT') && (
+                      <TextField
+                        label="Body (JSON)"
+                        multiline
+                        rows={3}
+                        value={apiConfig.body}
+                        onChange={(e) => setApiConfig({...apiConfig, body: e.target.value})}
+                        fullWidth
+                        margin="normal"
+                        placeholder='{"key": "value", "data": "example"}'
+                        helperText="Enter request body as JSON object"
+                      />
+                    )}
+                  </Box>
+                )}
+              </>
+            )}
+          </Paper>
+
+          {/* Query/CSV Upload Section */}
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">
+                {subMode === 'test' ? 'Query' : 'Test Data Upload'}
+              </Typography>
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Run Mode:
+                </Typography>
+                <RadioGroup
+                  value={subMode}
+                  onChange={(e) => setSubMode(e.target.value)}
+                  row
+                >
+                  <FormControlLabel
+                    value="test"
+                    control={<Radio size="small" />}
+                    label="Test"
+                  />
+                  <FormControlLabel
+                    value="evaluation"
+                    control={<Radio size="small" />}
+                    label="Evaluation"
+                  />
+                </RadioGroup>
+              </Box>
             </Box>
-          )}
-          
-          <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-            <Button
-              variant="contained"
-              onClick={handleSubmit}
-              disabled={isLoading || !usecaseId.trim() || (subMode === 'test' ? !query.trim() : evaluationData.length === 0)}
-              sx={{ minWidth: 120 }}
-            >
-              {isLoading ? <CircularProgress size={20} /> : 'Submit'}
-            </Button>
-          </Box>
+            
+            {/* Use Case ID - Available for both Test and Evaluation */}
+            <TextField
+              label="Use Case ID"
+              value={usecaseId}
+              onChange={(e) => setUsecaseId(e.target.value)}
+              fullWidth
+              margin="normal"
+              placeholder="Enter the use case ID for the documents you want to query"
+              helperText="This ID should match the use case ID used when uploading documents"
+              sx={{ mb: 3 }}
+            />
+            
+            {subMode === 'test' ? (
+              <Box>
+                <TextField
+                  label="Enter your query"
+                  multiline
+                  rows={4}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  fullWidth
+                  margin="normal"
+                  placeholder="Enter your question or query here..."
+                  required
+                />
+              </Box>
+            ) : (
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Upload a CSV file with "query" and "answer" columns for batch evaluation.
+                </Typography>
+                
+                <input
+                  accept=".csv"
+                  style={{ display: 'none' }}
+                  id="csv-upload"
+                  type="file"
+                  onChange={handleCsvUpload}
+                />
+                <label htmlFor="csv-upload">
+                  <Button
+                    variant="outlined"
+                    component="span"
+                    startIcon={<CloudUploadIcon />}
+                    sx={{ mb: 2 }}
+                  >
+                    Upload CSV File
+                  </Button>
+                </label>
+                
+                {csvFile && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Uploaded CSV File:
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        p: 2,
+                        border: '1px solid #e0e0e0',
+                        borderRadius: 1,
+                        backgroundColor: '#f5f5f5'
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                          {csvFile.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {evaluationData.length} test cases loaded
+                        </Typography>
+                      </Box>
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={removeCsvFile}
+                      >
+                        Remove
+                      </Button>
+                    </Box>
+                    
+                    {evaluationData.length > 0 && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Preview (first 3 rows):
+                        </Typography>
+                        <Box sx={{ maxHeight: 200, overflow: 'auto' }}>
+                          {evaluationData.slice(0, 3).map((row, index) => (
+                            <Box
+                              key={index}
+                              sx={{
+                                p: 1,
+                                mb: 1,
+                                border: '1px solid #e0e0e0',
+                                borderRadius: 1,
+                                backgroundColor: '#fafafa'
+                              }}
+                            >
+                              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                Query: {row.query}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Answer: {row.answer}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Box>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )}
+            
+            <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+              <Button
+                variant="contained"
+                onClick={handleSubmit}
+                disabled={isLoading || !usecaseId.trim() || (subMode === 'test' ? !query.trim() : evaluationData.length === 0)}
+                sx={{ minWidth: 120 }}
+              >
+                {isLoading ? <CircularProgress size={20} /> : 'Submit'}
+              </Button>
+            </Box>
+          </Paper>
+        </Box>
+      )}
+
+      {/* Response Display */}
+      {response && (
+        <Paper sx={{ p: 3, mt: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Response
+          </Typography>
+          <ResponseDisplay response={response} fields={formConfig?.responseFields || []} />
         </Paper>
       )}
 
-      {/* Response - Full Width at Bottom */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Response
-        </Typography>
-        {isLoading ? (
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
-            minHeight: '200px',
-            flexDirection: 'column',
-            gap: 2
-          }}>
-            <CircularProgress size={60} />
-            <Typography variant="body1" color="text.secondary">
-              Processing your request...
-            </Typography>
-          </Box>
-        ) : (
-          <ResponseDisplay 
-            response={response} 
-            fields={formConfig.responseFields} 
-          />
-        )}
-      </Paper>
+      {/* Confirmation Dialog */}
+      <ConfirmationDialog
+        open={showConfirmation}
+        onClose={() => setShowConfirmation(false)}
+        onConfirm={handleConfirmEvaluation}
+        title="Confirm Evaluation Mode"
+        message="You are about to run in evaluation mode. This will use the evaluation endpoint and may take longer to process. Are you sure you want to continue?"
+      />
     </Container>
   );
 }
