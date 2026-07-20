@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SAVI GPS Deep Wiki</title>
+  <meta name="description" content="SAVI GPS Deep Wiki" />
+  <link rel="icon" href="/favicon.ico" />
+  <style>
+    :root { --bg:#f8fafc;--bg-alt:#ffffff;--bg-alt2:#f1f5f9;--border:#e2e8f0;--border-strong:#cbd5e1;--text:#0f172a;--text-soft:#475569;--accent:#0ea5e9;--accent-accent:#0369a1;--accent-soft:#e0f2fe;--danger:#dc2626;--warn:#d97706;--ok:#059669;--purple:#7c3aed;--radius:12px;--code-bg:#0f172a;--code:#e2e8f0;--shadow:0 2px 4px rgba(0,0,0,.06),0 6px 18px rgba(0,0,0,.05);--gradient:linear-gradient(135deg,#0ea5e9,#6366f1 60%,#7c3aed);}*{box-sizing:border-box;}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;line-height:1.55;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;}a{color:var(--accent-accent);text-decoration:none;}a:hover{text-decoration:underline;}h1,h2,h3,h4,h5{line-height:1.15;letter-spacing:-.5px;font-weight:600;}h1{font-size:clamp(2.4rem,3.2vw,3rem);margin:.2rem 0 1.05rem;background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent;}h2{margin:3.1rem 0 1.15rem;font-size:1.9rem;position:relative;padding-top:.45rem;}h2:after{content:"";position:absolute;left:0;bottom:-.55rem;width:60px;height:3px;border-radius:3px;background:var(--gradient);}h3{margin:2.2rem 0 .8rem;font-size:1.24rem;}p{margin:1rem 0;}header.site{position:sticky;top:0;z-index:80;background:rgba(255,255,255,.85);backdrop-filter:saturate(180%) blur(14px);border-bottom:1px solid var(--border);}header.site .inner{max-width:1500px;margin:0 auto;padding:.85rem 1.45rem;display:flex;align-items:center;gap:1.6rem;}nav.primary a{font-size:.7rem;font-weight:600;padding:.42rem .7rem;border-radius:26px;display:inline-flex;align-items:center;gap:.35ch;letter-spacing:.06em;text-transform:uppercase;color:var(--text-soft);border:1px solid transparent;}nav.primary a:hover{background:var(--accent-soft);color:var(--accent-accent);}nav.primary a.active{background:var(--accent-accent);color:#fff;box-shadow:var(--shadow);} .badges{display:flex;gap:.5rem;margin-left:auto;} .badge{font-size:.58rem;font-weight:600;letter-spacing:.06em;padding:4px 9px;border-radius:999px;background:var(--accent-soft);color:#0369a1;text-transform:uppercase;display:inline-flex;align-items:center;} .badge.outline{background:#fff;border:1px solid var(--border);color:var(--text-soft);} .layout{display:grid;grid-template-columns:270px 1fr;gap:2.6rem;max-width:1500px;margin:2rem auto 4.8rem;padding:0 1.45rem;}aside.toc{position:sticky;top:78px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;padding:.4rem 0 2rem;}aside.toc h4{margin:1.2rem 0 .5rem;font-size:.63rem;letter-spacing:.1em;font-weight:700;color:var(--text-soft);text-transform:uppercase;}aside.toc ul{list-style:none;margin:0;padding:0;}aside.toc li{margin:.16rem 0;}aside.toc a{display:block;padding:.4rem .52rem;font-size:.66rem;line-height:1.15;border-radius:6px;color:var(--text-soft);border:1px solid transparent;letter-spacing:.02em;font-weight:500;}aside.toc a:hover{background:var(--accent-soft);color:var(--accent-accent);}aside.toc a.active{background:var(--accent-accent);color:#fff;box-shadow:var(--shadow);}article{background:var(--bg-alt);border:1px solid var(--border);border-radius:var(--radius);padding:2.6rem clamp(1.15rem,2vw,3rem) 3.7rem;box-shadow:var(--shadow);} .lead{font-size:1.12rem;color:var(--text-soft);max-width:72ch;} .inline-stats{display:flex;flex-wrap:wrap;gap:.75rem;margin:1.3rem 0 2.1rem;} .stat{background:var(--bg-alt2);border:1px solid var(--border);padding:.65rem .85rem .55rem;border-radius:12px;min-width:132px;display:flex;flex-direction:column;gap:.3rem;font-size:.6rem;letter-spacing:.05em;font-weight:600;} .stat span.value{font-size:1rem;letter-spacing:-.5px;color:var(--text);} .diagram-wrapper{margin:1.55rem 0 2.15rem;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--bg-alt);box-shadow:var(--shadow);} .diagram-wrapper header{background:var(--bg-alt2);padding:.52rem .78rem;font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--border);} .diagram{padding:.9rem 1.15rem .85rem;overflow:auto;} .table-wrapper{overflow:auto;border:1px solid var(--border);border-radius:12px;margin:.9rem 0 2rem;} table.meta{border-collapse:collapse;width:100%;font-size:.68rem;background:var(--bg-alt);} table.meta th{background:var(--bg-alt2);text-align:left;font-weight:600;padding:.48rem .55rem;font-size:.6rem;letter-spacing:.08em;border-bottom:1px solid var(--border);} table.meta td{padding:.5rem .55rem;border-bottom:1px solid var(--border);vertical-align:top;} table.meta tbody tr:last-child td{border-bottom:none;} details{border:1px solid var(--border);border-radius:10px;padding:.7rem .9rem;background:var(--bg-alt2);margin:.95rem 0 1.3rem;} details[open]{background:#eef7fb;} details summary{cursor:pointer;font-weight:600;list-style:none;} pre{background:var(--code-bg);color:var(--code);padding:.95rem 1.15rem;border-radius:10px;overflow:auto;font-size:.76rem;line-height:1.4;box-shadow:var(--shadow);} code:not(pre code){background:var(--accent-soft);color:#075985;padding:2px 6px;border-radius:6px;font-size:.7rem;} blockquote{margin:2rem 0;padding:.95rem 1.15rem;border-left:5px solid var(--accent);background:#f0f9ff;color:#075985;border-radius:0 10px 10px 0;} footer{margin:4.2rem 0 1.4rem;font-size:.55rem;text-align:center;color:#64748b;} @media (max-width:1180px){.layout{grid-template-columns:1fr;}aside.toc{position:static;max-height:none;display:flex;flex-wrap:wrap;gap:.55rem;background:var(--bg-alt);padding:1rem;border:1px solid var(--border);border-radius:var(--radius);}aside.toc h4{flex:1 1 100%;order:-1;}} @media (prefers-color-scheme:dark){:root{--bg:#0f172a;--bg-alt:#0f1827;--bg-alt2:#1e293b;--border:#1e293b;--border-strong:#334155;--text:#f1f5f9;--text-soft:#94a3b8;--accent:#06b6d4;--accent-accent:#06b6d4;--accent-soft:#083344;--code-bg:#020617;--code:#cbd5e1;}header.site{background:rgba(15,23,42,.92);}table.meta th{background:#162132;}details{background:#162132;}details[open]{background:#1e2d43;} .stat{background:#162132;}}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({startOnLoad:true,theme:(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'neutral')});</script>
+  <script>
+    document.addEventListener('DOMContentLoaded',()=>{
+      const links=[...document.querySelectorAll('aside.toc a')];
+      const map={};links.forEach(l=>map[l.getAttribute('href').slice(1)]=l);
+      const obs=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(x=>x.classList.remove('active'));map[e.target.id]?.classList.add('active');}})},{rootMargin:'-40% 0px -55% 0px'});
+      [...document.querySelectorAll('article h2[id],article h3[id]')].forEach(h=>obs.observe(h));
+    });
+  </script>
+</head>
+<body>
+  <header class="site">
+    <div class="inner">
+      <strong style="font-size:1.05rem;letter-spacing:-.5px;">SAVI GPS Deep Wiki</strong>
+      <nav class="primary" aria-label="Primary">
+        <a href="#overview">Overview</a>
+        <a href="#system-architecture">System</a>
+        <a href="#frontend-architecture">Frontend</a>
+        <a href="#backend-architecture">Backend</a>
+        <a href="#data-flow">Data Flow</a>
+        <a href="#end-to-end-flow">E2E Flow</a>
+        <a href="#component-interactions">Sequence</a>
+        <a href="#data-platform">Data</a>
+        <a href="#caching">Caching</a>
+        <a href="#cache-deep-dive">Cache Deep Dive</a>
+        <a href="#prompt-mgmt">Prompts</a>
+        <a href="#progress-semantics">Progress</a>
+        <a href="#deployment">Deployment</a>
+        <a href="#dev-script">Dev Script</a>
+        <a href="#security">Security</a>
+        <a href="#scalability">Scalability</a>
+        <a href="#validation">Validation</a>
+        <a href="#tech-stack">Stack</a>
+        <a href="#best-practices">Practices</a>
+        <a href="#future">Future</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+        <a href="#conclusion">Conclusion</a>
+      </nav>
+  <div class="badges"><span class="badge">v1.2</span><span class="badge outline">Updated <script>document.write(new Date().toISOString().split('T')[0])</script></span></div>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="toc" aria-label="Section Navigation">
+      <h4>Core</h4>
+      <ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#system-architecture">High-Level System</a></li>
+        <li><a href="#frontend-architecture">Frontend Architecture</a></li>
+        <li><a href="#backend-architecture">Backend Architecture</a></li>
+        <li><a href="#data-flow">Data Flow</a></li>
+        <li><a href="#end-to-end-flow">End-to-End Flow</a></li>
+        <li><a href="#component-interactions">Component Interactions</a></li>
+      </ul>
+      <h4>Platform</h4>
+      <ul>
+        <li><a href="#data-platform">Database & Storage</a></li>
+        <li><a href="#caching">Caching Strategies</a></li>
+        <li><a href="#cache-deep-dive">Cache Deep Dive</a></li>
+        <li><a href="#prompt-mgmt">Prompt Management</a></li>
+        <li><a href="#progress-semantics">Progress APIs</a></li>
+        <li><a href="#deployment">Deployment</a></li>
+        <li><a href="#dev-script">Dev Script</a></li>
+      </ul>
+      <h4>Operations</h4>
+      <ul>
+        <li><a href="#security">Security</a></li>
+        <li><a href="#scalability">Scalability</a></li>
+        <li><a href="#validation">Validation Matrix</a></li>
+        <li><a href="#tech-stack">Technology Stack</a></li>
+        <li><a href="#best-practices">Best Practices</a></li>
+        <li><a href="#future">Future</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#conclusion">Conclusion</a></li>
+      </ul>
+    </aside>
+    <main>
+      <article>
+        <h1 id="overview">Architecture Overview</h1>
+        <p class="lead">Unified reference describing ingestion, knowledge graph, diagram generation & modernization features. Update includes hardened diagram cache (version hash, TTL, sanitization) and formal validation matrix.</p>
+        <div class="inline-stats"><div class="stat"><span class="value">2</span>Tiers<small>Next.js & FastAPI</small></div><div class="stat"><span class="value">30+</span>API Routes<small>Modular</small></div><div class="stat"><span class="value">10+</span>Modernization Tools<small>Score • Plan • Tests</small></div><div class="stat"><span class="value">3</span>Pipelines<small>Ingest • Prepare • Generate</small></div><div class="stat"><span class="value">1</span>Store<small>Postgres + pgvector</small></div></div>
+        <h2 id="system-architecture">High-Level System Architecture</h2>
+        <div class="diagram-wrapper" role="figure" aria-label="System Diagram"><header>System Diagram</header><div class="diagram mermaid">flowchart TD
+  FE[Next.js Frontend] -->|REST and SSE| API[FastAPI Backend]
+  API --> PG[(PostgreSQL and pgvector)]
+  API --> GH[Git Provider]
+  subgraph GEN[Generation Phases]
+    EX[Explanation]
+    MAP[Component Mapping]
+    DIAG[Mermaid Diagram]
+  end
+  API --> EX
+  EX --> MAP
+  MAP --> DIAG
+  DIAG --> FE
+  subgraph MOD[Modernization Suite]
+    SCORE[Migration Scoring]
+    STRANGLER[Strangler Plan]
+    TESTGEN[Test Generation]
+    ADVISORY[Advisory Engine]
+  end
+  API --> SCORE
+  API --> STRANGLER
+  API --> TESTGEN
+  API --> ADVISORY
+</div></div>
+        <h2 id="frontend-architecture">Frontend Architecture</h2>
+        <p>App Router coordinates repo selection, cache probe (REST), SSE streaming phases and panel hydration (glossary, advisories, modernization insights).</p>
+        <ul>
+          <li>Cache signals: shows a "Stale" badge when TTL expired but a row exists.</li>
+          <li>Invalidate control: one-click invalidate triggers regeneration via server action.</li>
+          <li>Telemetry: emits <code>invalidate_diagram</code> event on invalidate click (client-side).</li>
+        </ul>
+  <div class="diagram-wrapper" role="figure" aria-label="Frontend Components"><header>Components</header><div class="diagram mermaid">flowchart LR
+  Page[Repo Page] --> Hook[useDiagram Hook]
+  Hook --> RESTProbe[REST Cache Probe]
+  Hook --> SSE[SSE Stream Parser]
+  SSE --> State[(Phase State Store)]
+  State --> DiagramUI[Diagram Viewer]
+  State --> StatsPanel[Telemetry Panel]
+  Page --> GlossaryPanel
+  Page --> AdvisoriesPanel
+  Page --> ModernizationPanel
+</div></div>
+        <h2 id="backend-architecture">Backend Architecture</h2>
+        <p>FastAPI routers map to cohesive services (ingest, prepare, generate, modernization, search, metrics) using a shared relational + vector store.</p>
+    <div class="diagram-wrapper" role="figure" aria-label="Backend Services"><header>Service Modules</header><div class="diagram mermaid">flowchart TB
+  Router[APIRouter Layer] --> IngestSvc[Ingest]
+  Router --> PrepareSvc[Prepare]
+  Router --> GenSvc[Diagram Generation]
+  Router --> ModernSvc[Modernization]
+  Router --> SearchSvc[Vector Search]
+  Router --> MetricsSvc[Metrics]
+  IngestSvc --> PG[(Postgres and pgvector)]
+  PrepareSvc --> PG
+  GenSvc --> PG
+  ModernSvc --> PG
+  SearchSvc --> PG
+</div></div>
+        <h2 id="data-flow">Data Flow</h2>
+    <div class="diagram-wrapper" role="figure" aria-label="Ingest Prepare Generate Flow"><header>Ingest → Prepare → Generate</header><div class="diagram mermaid">flowchart LR
+  A[Trigger Ingest] --> B[Clone]
+  B --> C[Enumerate Files]
+  C --> D[Parse and AST]
+  D --> E[Graph Upsert]
+  E --> F[Summaries]
+  F --> G[Embeddings]
+  G --> H[Process Detect]
+  H --> I[Modernization and Advisories]
+  I --> J[Diagram Generation Phases]
+  J --> K[UI Streaming Delivery]
+</div></div>
+        <h2 id="end-to-end-flow">End-to-End Repo → Diagram Flow</h2>
+        <ol>
+          <li>User selects repo & model.</li>
+          <li>UI parallel: tree fetch, ingest status, cache probe.</li>
+          <li>Ingest: clone → enumerate → parse → graph upsert.</li>
+          <li>Prepare: summaries, embeddings, processes, advisories.</li>
+          <li>Generate: SSE phases explanation → mapping → diagram with cost telemetry.</li>
+          <li>Cache: sanitized diagram + explanation persisted.</li>
+          <li>Replay: direct REST hit if version + TTL valid.</li>
+        </ol>
+        <h2 id="component-interactions">Component Interactions</h2>
+        <div class="diagram-wrapper" role="figure" aria-label="Generation Sequence"><header>Generation Sequence</header><div class="diagram mermaid">sequenceDiagram
+  participant UI as UI
+  participant API as generate_stream
+  participant LLM as LLM
+  UI->>API: POST repo and model
+  API-->>UI: event started
+  loop Phases
+    API->>LLM: Phase Prompt
+    LLM-->>API: Stream Tokens
+    API-->>UI: event partial and telemetry
+  end
+  API-->>UI: event complete diagram and cost
+  UI->>UI: Render Graph and Stats
+</div></div>
+        <h2 id="data-platform">Database & Storage Design</h2>
+        <div class="diagram-wrapper" role="figure" aria-label="Logical Data Model"><header>Logical Entities</header><div class="diagram mermaid">graph TD
+  Repo[Repository] --> Node[Node]
+  Node --> Edge[Edge]
+  Node --> Summary[Summary]
+  Node --> Embedding[Embedding]
+  Node --> Advisory[Advisory]
+  Node --> Flow[Flow Segment]
+  Flow --> Process[Process]
+  Node --> Note[Note]
+  Node --> Glossary[Glossary Term]
+  Advisory --> Metric[Metric]
+</div></div>
+        <p>Core tables: <code>kg_nodes</code>, <code>kg_edges</code>, <code>kg_embeddings</code>, <code>kg_flows</code>, <code>kg_advisories</code>, <code>kg_metrics</code>, <code>kg_ast_blobs</code>, <code>kg_glossary_terms</code>.</p>
+        <h2 id="caching">Caching Strategies</h2>
+        <ul>
+          <li><strong>Content Hash Idempotency:</strong> avoids duplicate ingest and summaries.</li>
+          <li><strong>Prompt Version Hash:</strong> instruction drift triggers regeneration.</li>
+          <li><strong>TTL Expiry:</strong> optional freshness; NULL = infinite.</li>
+          <li><strong>Fast Path:</strong> REST GET before any generation work.</li>
+        </ul>
+        <h3 id="cache-incident">Resolved Incident</h3>
+        <p>Previous misses (casing + premature streaming) fixed via lowercase normalization and probe-first ordering.</p>
+        <h2 id="cache-deep-dive">Diagram Cache Deep Dive</h2>
+        <p>Deterministic, low-latency replays using instruction version hashing + TTL and sanitized Mermaid IDs.</p>
+  <div class="table-wrapper"><table class="meta" aria-label="Diagram Cache Schema"><thead><tr><th>Column</th><th>Purpose</th><th>Notes</th></tr></thead><tbody><tr><td>username, repo, instruction_hash</td><td>Uniqueness key</td><td>Composite unique index <code>sdc_user_repo_instr_uq</code> (lowercase)</td></tr><tr><td>diagram</td><td>Mermaid source</td><td>Sanitized IDs</td></tr><tr><td>explanation</td><td>Narrative</td><td>Optional</td></tr><tr><td>model_used</td><td>LLM variant</td><td>Legacy nullable</td></tr><tr><td>instruction_hash</td><td>Prompt version</td><td>SHA1</td></tr><tr><td>expires_at</td><td>TTL boundary</td><td>NULL = none</td></tr><tr><td>last_accessed_at</td><td>Hit tracking</td><td>Async update</td></tr><tr><td>cache_source</td><td>Origin</td><td>llm|legacy</td></tr></tbody></table></div>
+        <details><summary>Retrieval Algorithm (Pseudo)</summary><pre>function fetchDiagram(user, repo, instructions) {
+  const hash = sha1(instructions)
+  const row = SELECT * FROM diagram_cache
+             WHERE username=user AND repo=repo AND instruction_hash=hash
+  if(!row) return MISS
+  if(row.expires_at && row.expires_at < now()) return EXPIRED // UI shows "Stale" badge
+  asyncUpdateLastAccessed(row)
+  return HIT(row)
+}
+
+function invalidate(user, repo, instructions) {
+  const hash = sha1(instructions)
+  DELETE FROM diagram_cache WHERE username=user AND repo=repo AND instruction_hash=hash
+  emitTelemetry('invalidate_diagram', { user, repo })
+}
+
+function regenerate(user, repo, payload) {
+  const sanitized = sanitizeMermaid(payload.diagram)
+  UPSERT sanitized + metadata (unique by username, repo, instruction_hash)
+}</pre></details>
+        <details><summary>Invalidate Control & Telemetry</summary><pre>UI: Invalidate button → server action delete (scoped by instruction_hash)
+Telemetry: posthog.capture('invalidate_diagram', { username, repo })</pre></details>
+        <details><summary>Status Telemetry States</summary><pre>checking_cache
+cache_hit_rest | cache_hit_action | cache_hit_final
+cache_miss_rest | cache_miss | cache_expired | cache_miss_version
+rest_error_fallback_action
+llm_start -> llm_streaming -> complete
+regen_forced
+error</pre></details>
+        <p><strong>Sanitization:</strong> Replace invalid characters (<code>[^A-Za-z0-9_]</code>) then dedupe with suffixes (<code>_1</code>, <code>_2</code>…).</p>
+        <div class="diagram-wrapper" role="figure" aria-label="Cache Flow Diagram"><header>Cache Flow</header><div class="diagram mermaid">flowchart LR
+  Start --> Probe[Cache Probe]
+  Probe -->|Hit| Serve[Serve Cached]
+  Probe -->|Miss| Phase1[Explanation]
+  Probe -->|Expired| Stale[Show Stale Badge]
+  Stale --> Phase1
+  Phase1 --> Phase2[Mapping]
+  Phase2 --> Phase3[Diagram]
+  Phase3 --> Sanitize[Sanitize IDs]
+  Sanitize --> Upsert[Upsert by user repo instruction_hash]
+  Upsert --> Serve
+</div></div>
+        <p><strong>Edge Cases:</strong> expired→miss; version drift→regen; REST failure→server action fallback; concurrent writes→last writer wins.</p>
+        <h2 id="prompt-mgmt">Centralized Prompt Management</h2>
+        <ul><li>Phase templates</li><li>Instruction hashing</li><li>Model allow-list gating</li></ul>
+        <h2 id="progress-semantics">Progress & View APIs</h2>
+        <ul><li><code>/graph/progress</code></li><li><code>/github/ingest</code></li><li><code>/graph/view</code></li><li><code>/graph/processes</code></li></ul>
+        <h2 id="deployment">Deployment Architecture</h2>
+    <div class="diagram-wrapper" role="figure" aria-label="Deployment Diagram"><header>Containers</header><div class="diagram mermaid">flowchart LR
+  Client -- HTTPS --> Nginx[Nginx Reverse Proxy]
+  Nginx --> Web[Next.js Server]
+  Nginx --> API[FastAPI App]
+  API --> DB[(Postgres and pgvector)]
+  API --> LLM[(LLM Provider)]
+</div></div>
+        <h2 id="dev-script">Development Orchestration (dev-all.sh)</h2>
+        <ul><li>Flags (<code>--no-api</code>, <code>--no-frontend</code>)</li><li>.next purge prevents stale server action bundles</li><li>Migrations + DB readiness gating</li></ul>
+        <h2 id="security">Security Architecture</h2>
+        <ul><li>HTTPS termination</li><li>Optional API key gating</li><li>Rate limiting tiers</li><li>Minimal persisted artifacts</li></ul>
+        <h2 id="scalability">Scalability</h2>
+        <ul><li>Stateless API nodes</li><li>Async ingest / batched embeddings</li><li>Early partial value (tree, summaries)</li><li>Token budget backpressure</li></ul>
+        <h2 id="validation">Validation Matrix</h2>
+  <div class="table-wrapper"><table class="meta" aria-label="Validation Matrix"><thead><tr><th>Scenario</th><th>Pre State</th><th>Action</th><th>Status Sequence</th><th>Network</th><th>DB Effect</th></tr></thead><tbody><tr><td>Cold Load</td><td>No row</td><td>Open page</td><td>checking_cache→cache_miss_rest→cache_miss→llm_start…complete</td><td>SSE</td><td>INSERT</td></tr><tr><td>Replay Hit</td><td>Valid row</td><td>Reload</td><td>checking_cache→cache_hit_rest→cache_hit_final</td><td>None</td><td>UPDATE last_accessed_at</td></tr><tr><td>Expired</td><td>TTL past</td><td>Reload</td><td>checking_cache→cache_expired→stale_badge→llm_start…complete</td><td>SSE</td><td>UPSERT</td></tr><tr><td>Version Drift</td><td>Hash mismatch</td><td>Reload</td><td>checking_cache→cache_miss_version→llm_start…complete</td><td>SSE</td><td>UPSERT</td></tr><tr><td>Invalidate</td><td>Valid row</td><td>Click invalidate</td><td>invalidate_clicked→regen_forced→llm_start…complete</td><td>SSE</td><td>DELETE+INSERT (scoped by instruction_hash)</td></tr><tr><td>REST Fail Fallback</td><td>Row present</td><td>REST 500</td><td>checking_cache→rest_error_fallback_action→cache_hit_action→cache_hit_final</td><td>None</td><td>UPDATE last_accessed_at</td></tr></tbody></table></div>
+  <details><summary>Manual Validation Steps</summary><pre>1. Cold load new repo: SSE + INSERT
+2. Reload: cache_hit_rest (no SSE)
+3. Invalidate: DELETE then streaming phases
+4. Expire row & reload: regeneration path (stale badge visible)
+5. Change instructions: version miss path
+6. Force REST 500: server action fallback</pre></details>
+  <h3 id="db-migrations">Database Migrations (Recent)</h3>
+  <ul>
+    <li><code>0004_drop_legacy_gitdiagram_tables.sql</code> — drops obsolete <code>gitdiagram_diagram_cache</code> if present.</li>
+    <li><code>0005_diagram_cache_composite_index.sql</code> — creates composite unique index <code>sdc_user_repo_instr_uq</code> on (username, repo, instruction_hash).</li>
+  </ul>
+        <h2 id="tech-stack">Technology Stack</h2>
+        <div class="table-wrapper"><table class="meta"><thead><tr><th>Layer</th><th>Tech</th><th>Purpose</th></tr></thead><tbody><tr><td>Frontend</td><td>Next.js / TS / Tailwind</td><td>UI & routing</td></tr><tr><td>Backend</td><td>FastAPI (Python)</td><td>Async APIs</td></tr><tr><td>DB</td><td>Postgres + pgvector</td><td>Relational + semantic</td></tr><tr><td>LLM</td><td>OpenAI Models</td><td>Generation</td></tr><tr><td>Testing</td><td>Playwright / Karate</td><td>E2E & API</td></tr><tr><td>Docs</td><td>Mermaid + Custom</td><td>Architecture diagrams</td></tr></tbody></table></div>
+        <h2 id="best-practices">Best Practices</h2>
+        <ul><li>Deterministic prompts (hash)</li><li>Early cost telemetry</li><li>Progressive streaming</li><li>Sanitize before persist</li></ul>
+  <h2 id="future">Future Enhancements</h2>
+  <ul><li>ETag + 304 conditional GET</li><li>TTL sweeper + hit metrics</li><li>History table for prior instruction_hash variants</li><li>Telemetry dashboard</li></ul>
+  <h2 id="troubleshooting">Troubleshooting</h2>
+  <ul><li>Mermaid parse → sanitize & retry</li><li>Stream stall >30s → provider timeout</li><li>Unexpected miss → check key + hash</li><li>Duplicate key on upsert → run DB migrations; ensure index <code>sdc_user_repo_instr_uq</code> exists</li></ul>
+        <h2 id="conclusion">Conclusion</h2>
+  <blockquote>Composite uniqueness + explicit version hashing, UI stale signals, and invalidate control deliver low-latency, correct, and observable replays.</blockquote>
+        <footer>© <script>document.write(new Date().getFullYear())</script> SMEBuddy • Updated Architecture Reference</footer>
+      </article>
+    </main>
+  </div>
+</body>
+</html>

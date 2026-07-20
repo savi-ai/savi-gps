@@ -1,0 +1,91 @@
+id: security-001
+name: Security Best Practices
+version: 1.0.0
+category: security
+status: active
+description: Standard security practices for all generated code and architecture
+
+rules:
+  - id: SEC-001
+    title: Authentication and Authorization
+    description: All endpoints must implement proper authentication and authorization
+    severity: critical
+    guidelines:
+      - Implement JWT or OAuth2 for API authentication
+      - Use role-based access control (RBAC) for authorization
+      - Never store passwords in plain text - use bcrypt or argon2
+      - Implement session timeout and token expiration
+      - Use HTTPS for all API communications
+    
+  - id: SEC-002
+    title: Input Validation
+    description: Validate and sanitize all user inputs
+    severity: critical
+    guidelines:
+      - Validate all input data types and formats
+      - Sanitize inputs to prevent SQL injection
+      - Sanitize inputs to prevent XSS attacks
+      - Use parameterized queries for database operations
+      - Implement request size limits
+      - Validate file uploads (type, size, content)
+    
+  - id: SEC-003
+    title: Data Protection
+    description: Protect sensitive data at rest and in transit
+    severity: high
+    guidelines:
+      - Encrypt sensitive data at rest (PII, passwords, tokens)
+      - Use TLS 1.2+ for data in transit
+      - Implement proper key management
+      - Never log sensitive data (passwords, tokens, PII)
+      - Use environment variables for secrets, never hardcode
+      - Implement data masking for logs and error messages
+    
+  - id: SEC-004
+    title: Error Handling
+    description: Handle errors securely without exposing sensitive information
+    severity: medium
+    guidelines:
+      - Never expose stack traces to end users
+      - Log errors securely with appropriate detail
+      - Return generic error messages to clients
+      - Implement proper exception handling
+      - Use structured logging for security events
+    
+  - id: SEC-005
+    title: API Security
+    description: Secure API endpoints and prevent abuse
+    severity: high
+    guidelines:
+      - Implement rate limiting on all endpoints
+      - Use API keys or tokens for authentication
+      - Implement CORS properly with whitelist
+      - Validate Content-Type headers
+      - Implement request signing for sensitive operations
+      - Use API versioning
+    
+  - id: SEC-006
+    title: Dependency Management
+    description: Keep dependencies secure and up-to-date
+    severity: medium
+    guidelines:
+      - Regularly update dependencies
+      - Scan for known vulnerabilities
+      - Use lock files (package-lock.json, requirements.txt)
+      - Avoid dependencies with known security issues
+      - Review dependency licenses
+
+applies_to:
+  - architecture
+  - backend
+  - frontend
+  - api
+
+enforcement: required
+
+validation:
+  - Check for authentication middleware on protected routes
+  - Verify input validation on all endpoints
+  - Scan for hardcoded secrets
+  - Check for proper error handling
+  - Verify HTTPS configuration

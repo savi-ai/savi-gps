@@ -1,0 +1,149 @@
+id: coding-001
+name: Coding Standards and Best Practices
+version: 1.0.0
+category: coding
+status: active
+description: Standard coding practices for maintainable and high-quality code
+
+rules:
+  - id: CODE-001
+    title: Code Organization
+    description: Organize code in a logical and maintainable structure
+    severity: high
+    guidelines:
+      - Follow language-specific project structure conventions
+      - Group related functionality into modules/packages
+      - Separate concerns (business logic, data access, presentation)
+      - Use meaningful file and directory names
+      - Keep files focused and reasonably sized (< 500 lines)
+      - Organize imports/includes logically
+    
+  - id: CODE-002
+    title: Naming Conventions
+    description: Use clear and consistent naming throughout the codebase
+    severity: medium
+    guidelines:
+      - Use descriptive names for variables, functions, and classes
+      - Follow language-specific naming conventions (camelCase, snake_case, PascalCase)
+      - Use verb phrases for functions (getUserById, calculateTotal)
+      - Use noun phrases for classes and variables (UserService, totalAmount)
+      - Avoid abbreviations unless widely understood
+      - Use consistent terminology across the codebase
+    
+  - id: CODE-003
+    title: Function and Method Design
+    description: Write focused, testable functions and methods
+    severity: high
+    guidelines:
+      - Keep functions small and focused (< 50 lines)
+      - Follow Single Responsibility Principle
+      - Limit function parameters (< 5 parameters)
+      - Use descriptive parameter names
+      - Return early to reduce nesting
+      - Avoid side effects in pure functions
+      - Document complex logic with comments
+    
+  - id: CODE-004
+    title: Error Handling
+    description: Handle errors consistently and appropriately
+    severity: critical
+    guidelines:
+      - Use exceptions for exceptional cases, not control flow
+      - Catch specific exceptions, not generic ones
+      - Provide meaningful error messages
+      - Log errors with appropriate context
+      - Clean up resources in finally blocks or using context managers
+      - Don't swallow exceptions silently
+      - Implement proper error recovery strategies
+    
+  - id: CODE-005
+    title: Code Documentation
+    description: Document code to improve maintainability
+    severity: medium
+    guidelines:
+      - Write docstrings for all public functions and classes
+      - Document complex algorithms and business logic
+      - Keep comments up-to-date with code changes
+      - Use inline comments sparingly for non-obvious code
+      - Document API contracts and expected behavior
+      - Include usage examples in documentation
+      - Document assumptions and constraints
+    
+  - id: CODE-006
+    title: Code Reusability
+    description: Write reusable and DRY (Don't Repeat Yourself) code
+    severity: medium
+    guidelines:
+      - Extract common functionality into shared utilities
+      - Use inheritance and composition appropriately
+      - Create reusable components and modules
+      - Avoid code duplication
+      - Use design patterns where appropriate
+      - Keep dependencies minimal and explicit
+    
+  - id: CODE-007
+    title: Testing
+    description: Write testable code with appropriate test coverage
+    severity: high
+    guidelines:
+      - Write unit tests for business logic
+      - Aim for 80%+ code coverage
+      - Use dependency injection for testability
+      - Mock external dependencies in tests
+      - Write integration tests for critical paths
+      - Use descriptive test names
+      - Follow AAA pattern (Arrange, Act, Assert)
+    
+  - id: CODE-008
+    title: Performance Considerations
+    description: Write efficient code that performs well
+    severity: medium
+    guidelines:
+      - Avoid premature optimization
+      - Use appropriate data structures and algorithms
+      - Minimize database queries (N+1 problem)
+      - Use lazy loading where appropriate
+      - Implement caching for expensive operations
+      - Profile code to identify bottlenecks
+      - Consider time and space complexity
+    
+  - id: CODE-009
+    title: Code Style and Formatting
+    description: Maintain consistent code style and formatting
+    severity: low
+    guidelines:
+      - Use automated formatters (Black, Prettier, gofmt)
+      - Follow language-specific style guides (PEP 8, Airbnb)
+      - Use linters to catch common issues
+      - Maintain consistent indentation (spaces vs tabs)
+      - Limit line length (80-120 characters)
+      - Use consistent brace styles
+    
+  - id: CODE-010
+    title: Dependency Management
+    description: Manage dependencies properly
+    severity: medium
+    guidelines:
+      - Pin dependency versions in lock files
+      - Keep dependencies up-to-date
+      - Minimize dependency count
+      - Avoid circular dependencies
+      - Use virtual environments or containers
+      - Document required dependencies
+      - Scan for security vulnerabilities
+
+applies_to:
+  - backend
+  - frontend
+  - scripts
+  - utilities
+
+enforcement: required
+
+validation:
+  - Check code follows naming conventions
+  - Verify functions are appropriately sized
+  - Check for proper error handling
+  - Verify test coverage meets minimum threshold
+  - Check for code duplication
+  - Verify documentation exists for public APIs

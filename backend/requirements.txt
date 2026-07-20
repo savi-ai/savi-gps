@@ -1,0 +1,42 @@
+# FastAPI and ASGI Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Data Validation and Settings
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Database ORM
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9  # PostgreSQL driver for Intelligence/pgvector
+
+# Workflow Orchestration
+langgraph>=0.0.20
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+
+# LLM Providers
+openai>=1.3.0
+anthropic>=0.49.0  # 0.39.x breaks with httpx>=0.28 (proxies kwarg removed)
+httpx>=0.27.0,<1.0.0
+boto3>=1.29.0
+
+# YAML Processing
+pyyaml>=6.0.1
+
+# Additional utilities
+python-multipart>=0.0.6  # Required for FastAPI form data
+aiohttp>=3.9.0  # For direct Ollama HTTP calls
+
+# Authentication
+python-jose[cryptography]>=3.3.0  # JWT token handling
+passlib[bcrypt]>=1.7.4  # Password hashing
+python-dateutil>=2.8.2  # Date utilities
+cryptography>=42.0.0  # GitHub PAT encryption at rest
+neo4j>=5.14.0  # Optional L2/L3 call graph (Phase 4)
+
+# Database migrations
+alembic>=1.13.0
+
+

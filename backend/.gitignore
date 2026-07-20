@@ -1,0 +1,49 @@
+# Local secrets (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+gps.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+genv/
+gpsenv/
+ENV/
+
+# Runtime storage (tenant repos, analysis artifacts)
+storage/
+!storage/README.md
+
+# Legacy analysis spill
+app/scripts/temp_store/
+
+# Logs / OS / IDE
+*.log
+logs/
+.DS_Store
+.idea/
+.vscode/
+*.pem

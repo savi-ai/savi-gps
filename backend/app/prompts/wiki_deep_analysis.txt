@@ -1,0 +1,68 @@
+Analyze the repository source code at the clone path provided.
+
+Goal: Create comprehensive Wiki/documentation in HTML format from the actual code.
+
+HTML sections (include whatever applies — do not hallucinate missing features):
+- Overview
+- Core / System Architecture (high-level + component diagrams via Mermaid)
+- Business Logic Layer (REQUIRED — see deep analysis rules below)
+- API Specification (if HTTP/RPC endpoints exist)
+- Data Flow
+- End-to-End (E2E) Flow
+- Database / Data Model (if applicable)
+- Build, Run Locally, Deployment
+- Technology Stack
+- Any other sections that add value for this codebase
+
+STYLE REFERENCE: Match the layout and quality of app/scripts/sample.html:
+- Sticky header + left sidebar table-of-contents
+- Mermaid diagrams in styled wrappers
+- Inline stats, tables, code blocks
+- Professional typography and section anchors
+- Adapt sections to the project — not every sample section is required
+
+*** DEEP WIKI PARITY REQUIRED ***
+
+IMPORTANT: You MUST include a detailed "Business Logic Layer" section.
+
+To generate this section, analyze IMPLEMENTATION files (e.g. *Impl.java, *Service.java, *Logic.java, *Manager.py, handlers, use-cases) — NOT just interfaces or API stubs.
+
+For each Core Component (e.g. BankManager, OrderService, IndexerService), extract:
+
+1. Step-by-Step Workflows — describe logic flow found in code, not just method names.
+   Example: "Transfer: 1. Withdraw from source. 2. Deposit to target. 3. Record audit entry."
+   Example: "Loan Request: 1. Sum non-loan balances. 2. Compare against down-payment rules. 3. Create pending loan."
+
+2. Business Rules — hardcoded rules, config constants, validations, defaults.
+   Example: "New customers receive a Checking account with INITIAL_BALANCE from AdminParameters."
+
+Structure each component as:
+### [Component Name]
+- **Purpose**: ...
+- **Key Workflows**:
+  - [Operation Name]: [Step 1] -> [Step 2] -> [Step 3]
+- **Business Rules**:
+  - [Rule with file citation]
+
+If call_graph_context.md exists in the output directory, treat its CALL edges as verified static analysis when writing Business Logic Layer workflows (cite the provided file:line citations).
+
+Also identify where applicable:
+- Core Components (Managers, Services, Agents)
+- Customer / user-facing operations (detailed flows)
+- Account / entity operations (detailed flows)
+- Transaction / request processing flows
+- Integration details (how controllers/routers call services)
+
+If a section does not apply, omit it or rename headers to match what IS present. Never invent features.
+
+CITATIONS: Every claim must cite evidence with `relative/file/path.ext` (and line numbers when possible).
+
+OUTPUT FILES (write all to the output directory only — never modify the clone):
+- wiki_site.html — full standalone HTML wiki (left nav + Mermaid CDN)
+- wiki_site.md — same content as Markdown
+- wiki_result.json — structured JSON including business_logic_layer, diagrams, analysis_attributes, sections_md
+
+STATUS MARKERS (in output directory):
+- WIKI_STARTED — ISO timestamp when analysis begins
+- WIKI_COMPLETED — ISO timestamp when all files are written
+- WIKI_FAILED — ISO timestamp + error message on failure

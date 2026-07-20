@@ -1,0 +1,120 @@
+id: architecture-001
+name: Architecture Best Practices
+version: 1.0.0
+category: architecture
+status: active
+description: Standard architectural practices for system design and component organization
+
+rules:
+  - id: ARCH-001
+    title: Bounded Context Definition
+    description: Clearly define bounded contexts and their boundaries
+    severity: high
+    guidelines:
+      - Identify distinct business domains and capabilities
+      - Define clear boundaries between contexts
+      - Minimize coupling between bounded contexts
+      - Use domain events for cross-context communication
+      - Document context maps showing relationships
+      - Ensure each context has a ubiquitous language
+    
+  - id: ARCH-002
+    title: Component Responsibility
+    description: Each component should have a single, well-defined responsibility
+    severity: high
+    guidelines:
+      - Follow Single Responsibility Principle (SRP)
+      - Define clear interfaces for each component
+      - Avoid god objects or components
+      - Keep components cohesive and loosely coupled
+      - Document component responsibilities clearly
+      - Limit component dependencies
+    
+  - id: ARCH-003
+    title: Data Management
+    description: Proper data storage and access patterns
+    severity: critical
+    guidelines:
+      - Separate read and write models when appropriate (CQRS)
+      - Use appropriate database types (SQL, NoSQL, cache)
+      - Implement proper data partitioning and sharding
+      - Define clear data ownership per bounded context
+      - Avoid shared databases across contexts
+      - Implement proper backup and recovery strategies
+    
+  - id: ARCH-004
+    title: API Design
+    description: Design consistent and maintainable APIs
+    severity: high
+    guidelines:
+      - Follow RESTful principles for HTTP APIs
+      - Use consistent naming conventions
+      - Implement proper versioning strategy
+      - Document APIs with OpenAPI/Swagger
+      - Use appropriate HTTP methods and status codes
+      - Implement pagination for list endpoints
+      - Use HATEOAS for discoverability
+    
+  - id: ARCH-005
+    title: Scalability and Performance
+    description: Design for scalability and performance from the start
+    severity: high
+    guidelines:
+      - Design stateless services when possible
+      - Implement horizontal scaling capabilities
+      - Use caching strategically (Redis, CDN)
+      - Implement connection pooling
+      - Use async processing for long-running tasks
+      - Design for eventual consistency where appropriate
+      - Implement circuit breakers for external dependencies
+    
+  - id: ARCH-006
+    title: Observability
+    description: Build in monitoring and debugging capabilities
+    severity: medium
+    guidelines:
+      - Implement structured logging
+      - Add distributed tracing (correlation IDs)
+      - Expose health check endpoints
+      - Implement metrics collection (Prometheus)
+      - Add performance monitoring
+      - Include debug endpoints for troubleshooting
+    
+  - id: ARCH-007
+    title: Resilience and Fault Tolerance
+    description: Design systems to handle failures gracefully
+    severity: high
+    guidelines:
+      - Implement retry logic with exponential backoff
+      - Use circuit breakers for external services
+      - Implement timeouts for all external calls
+      - Design for graceful degradation
+      - Implement bulkheads to isolate failures
+      - Use dead letter queues for failed messages
+      - Implement proper error handling and recovery
+    
+  - id: ARCH-008
+    title: Technology Stack Selection
+    description: Choose appropriate technologies for each component
+    severity: medium
+    guidelines:
+      - Match technology to use case requirements
+      - Consider team expertise and learning curve
+      - Evaluate community support and maturity
+      - Consider licensing and cost implications
+      - Avoid over-engineering with unnecessary technologies
+      - Document technology decisions and rationale
+
+applies_to:
+  - architecture
+  - system_design
+  - component_design
+
+enforcement: required
+
+validation:
+  - Verify bounded contexts are clearly defined
+  - Check component responsibilities are documented
+  - Validate API design follows REST principles
+  - Verify scalability considerations are addressed
+  - Check observability features are included

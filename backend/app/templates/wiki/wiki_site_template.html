@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{REPO_NAME}} — Savi GPS Wiki</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --sidebar-w: 260px;
+      --bg: #0f172a;
+      --sidebar-bg: #1e293b;
+      --sidebar-text: #e2e8f0;
+      --sidebar-muted: #94a3b8;
+      --accent: #6366f1;
+      --content-bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Inter, system-ui, -apple-system, sans-serif; display: flex; min-height: 100vh; background: var(--content-bg); color: var(--text); }
+    .sidebar {
+      width: var(--sidebar-w); background: var(--sidebar-bg); color: var(--sidebar-text);
+      position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; border-right: 1px solid #334155;
+    }
+    .sidebar-header { padding: 1.25rem; border-bottom: 1px solid #334155; }
+    .sidebar-header h1 { font-size: 0.95rem; font-weight: 600; line-height: 1.3; }
+    .sidebar-header p { font-size: 0.7rem; color: var(--sidebar-muted); margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .nav-group { padding: 0.75rem 0; }
+    .nav-group-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--sidebar-muted); padding: 0 1rem 0.5rem; }
+    .nav-link {
+      display: block; padding: 0.45rem 1rem; font-size: 0.85rem; color: var(--sidebar-text);
+      text-decoration: none; border-left: 3px solid transparent;
+    }
+    .nav-link:hover, .nav-link.active { background: rgba(99,102,241,0.15); border-left-color: var(--accent); color: #fff; }
+    .main { margin-left: var(--sidebar-w); flex: 1; padding: 2rem 2.5rem; max-width: 960px; }
+    .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: #e0e7ff; color: #3730a3; font-weight: 500; }
+    .badge-draft { background: #fef3c7; color: #92400e; }
+    section { margin-bottom: 3rem; scroll-margin-top: 1.5rem; }
+    section h2 { font-size: 1.35rem; font-weight: 700; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--border); }
+    section h3 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: #334155; }
+    p, li { font-size: 0.9rem; line-height: 1.65; color: var(--text-muted); }
+    ul { padding-left: 1.25rem; margin: 0.5rem 0; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.25rem; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 1rem 0; }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: #f1f5f9; font-weight: 600; }
+    code { background: #f1f5f9; padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-size: 0.82rem; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; font-size: 0.8rem; margin: 0.75rem 0; }
+    .mermaid-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.5rem; margin: 1rem 0; overflow-x: auto; }
+    .meta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+    .meta-item { background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem; }
+    .meta-item .label { font-size: 0.7rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.04em; }
+    .meta-item .value { font-size: 0.95rem; font-weight: 600; margin-top: 0.25rem; }
+    .citation { font-size: 0.75rem; color: var(--accent); }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <h1>{{REPO_NAME}}</h1>
+      <p>Savi GPS Intelligence Wiki</p>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Overview</div>
+      <a class="nav-link active" href="#overview">Repository Overview</a>
+      <a class="nav-link" href="#functionality">Functionality</a>
+      <a class="nav-link" href="#tech-stack">Tech Stack</a>
+      <a class="nav-link" href="#analysis-attributes">Analysis Attributes</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Architecture</div>
+      <a class="nav-link" href="#system-context">System Context</a>
+      <a class="nav-link" href="#high-level-arch">High-Level Architecture</a>
+      <a class="nav-link" href="#low-level-arch">Low-Level / Components</a>
+      <a class="nav-link" href="#business-logic">Business Logic Layer</a>
+      <a class="nav-link" href="#data-model">Data Model</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Flows</div>
+      <a class="nav-link" href="#request-flow">Request / API Flow</a>
+      <a class="nav-link" href="#sequence-diagrams">Sequence Diagrams</a>
+      <a class="nav-link" href="#deployment-flow">Deployment Flow</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Operations</div>
+      <a class="nav-link" href="#api-surface">API Surface</a>
+      <a class="nav-link" href="#build-deploy">Build &amp; Deploy</a>
+      <a class="nav-link" href="#run-locally">Run Locally</a>
+      <a class="nav-link" href="#observability">Observability</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <p><span class="badge badge-draft">Draft</span> <span class="badge">Wiki Agent v1</span></p>
+
+    <!-- OVERVIEW -->
+    <section id="overview">
+      <h2>Repository Overview</h2>
+      <p>{{OVERVIEW_DESCRIPTION}}</p>
+      <div class="meta-grid">
+        <div class="meta-item"><div class="label">Repository</div><div class="value">{{REPO_FULL_NAME}}</div></div>
+        <div class="meta-item"><div class="label">Default branch</div><div class="value">{{DEFAULT_BRANCH}}</div></div>
+        <div class="meta-item"><div class="label">Lines of code</div><div class="value">{{LOC}}</div></div>
+        <div class="meta-item"><div class="label">Indexed files</div><div class="value">{{FILE_COUNT}}</div></div>
+      </div>
+    </section>
+
+    <section id="functionality">
+      <h2>Functionality</h2>
+      <p>{{FUNCTIONALITY_SUMMARY}}</p>
+      <ul>
+        {{FUNCTIONALITY_BULLETS}}
+      </ul>
+    </section>
+
+    <section id="tech-stack">
+      <h2>Tech Stack</h2>
+      <div class="card">
+        <table>
+          <thead><tr><th>Layer</th><th>Technologies</th><th>Evidence</th></tr></thead>
+          <tbody>
+            {{TECH_STACK_ROWS}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="analysis-attributes">
+      <h2>Analysis Attributes</h2>
+      <p>Configurable metadata extracted per tenant analysis profile — searchable across the fleet.</p>
+      <div class="card">
+        <table>
+          <thead><tr><th>Attribute</th><th>Value</th><th>Source</th><th>Confidence</th></tr></thead>
+          <tbody>
+            {{ANALYSIS_ATTRIBUTE_ROWS}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section id="system-context">
+      <h2>System Context (C4)</h2>
+      <p>High-level actors and external systems interacting with this repository.</p>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+C4Context
+  title System Context — {{REPO_NAME}}
+  Person(user, "User", "Uses the application")
+  System(app, "{{REPO_NAME}}", "Primary system under analysis")
+  System_Ext(ext, "External Services", "APIs, databases, queues")
+  Rel(user, app, "Uses")
+  Rel(app, ext, "Integrates with")
+        </pre>
+      </div>
+    </section>
+
+    <section id="high-level-arch">
+      <h2>High-Level Architecture</h2>
+      <p>Major containers, services, and deployment units.</p>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+{{HIGH_LEVEL_MERMAID}}
+        </pre>
+      </div>
+    </section>
+
+    <section id="low-level-arch">
+      <h2>Low-Level / Component Architecture</h2>
+      <p>Internal modules, packages, and key components inferred from the codebase.</p>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+{{LOW_LEVEL_MERMAID}}
+        </pre>
+      </div>
+    </section>
+
+    <section id="business-logic">
+      <h2>Business Logic Layer</h2>
+      <p>Step-by-step workflows and business rules extracted from implementation files (services, managers, handlers).</p>
+      <div class="card">
+        {{BUSINESS_LOGIC_HTML}}
+      </div>
+    </section>
+
+    <section id="data-model">
+      <h2>Data Model</h2>
+      <p>{{DATA_MODEL_SUMMARY}}</p>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+{{DATA_MODEL_MERMAID}}
+        </pre>
+      </div>
+    </section>
+
+    <!-- FLOWS -->
+    <section id="request-flow">
+      <h2>Request / API Flow</h2>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+{{REQUEST_FLOW_MERMAID}}
+        </pre>
+      </div>
+    </section>
+
+    <section id="sequence-diagrams">
+      <h2>Sequence Diagrams</h2>
+      <h3>Primary user journey</h3>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+  participant U as User
+  participant A as Application
+  participant D as Database
+  U->>A: Request
+  A->>D: Query
+  D-->>A: Result
+  A-->>U: Response
+        </pre>
+      </div>
+    </section>
+
+    <section id="deployment-flow">
+      <h2>Deployment Flow</h2>
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+{{DEPLOYMENT_FLOW_MERMAID}}
+        </pre>
+      </div>
+    </section>
+
+    <!-- OPERATIONS -->
+    <section id="api-surface">
+      <h2>API Surface</h2>
+      <ul>{{API_SURFACE_LIST}}</ul>
+    </section>
+
+    <section id="build-deploy">
+      <h2>Build &amp; Deploy</h2>
+      <p>{{BUILD_DEPLOY_SUMMARY}}</p>
+      <ul>{{BUILD_ARTIFACTS_LIST}}</ul>
+    </section>
+
+    <section id="run-locally">
+      <h2>Run Locally</h2>
+      <p>{{RUN_LOCALLY_INTRO}}</p>
+      <h3>Prerequisites</h3>
+      <ul>{{PREREQUISITES_LIST}}</ul>
+      <h3>Commands</h3>
+      <pre>{{RUN_COMMANDS}}</pre>
+    </section>
+
+    <section id="observability">
+      <h2>Observability</h2>
+      <p>{{OBSERVABILITY_SUMMARY}}</p>
+    </section>
+
+    <footer>
+      Generated by Savi GPS Wiki Agent · {{GENERATED_AT}} · Index run {{INDEX_RUN_ID}}
+    </footer>
+  </main>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', () => {
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

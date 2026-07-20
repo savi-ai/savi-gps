@@ -1,0 +1,181 @@
+id: performance-001
+name: Performance and Scalability Standards
+version: 1.0.0
+category: performance
+status: active
+description: Standards for building performant and scalable applications
+
+rules:
+  - id: PERF-001
+    title: Response Time Requirements
+    description: Meet response time SLAs for all operations
+    severity: high
+    guidelines:
+      - API endpoints should respond within 200ms for simple queries
+      - Complex queries should complete within 1 second
+      - Background tasks should provide immediate acknowledgment
+      - Implement timeout handling for all external calls
+      - Use async processing for long-running operations
+      - Monitor and alert on response time degradation
+    
+  - id: PERF-002
+    title: Database Performance
+    description: Optimize database queries and operations
+    severity: high
+    guidelines:
+      - Add indexes on frequently queried columns
+      - Avoid N+1 query problems
+      - Use query optimization techniques (EXPLAIN)
+      - Implement connection pooling
+      - Use read replicas for read-heavy workloads
+      - Implement database query caching
+      - Limit result set sizes with pagination
+      - Use batch operations for bulk updates
+    
+  - id: PERF-003
+    title: Caching Strategy
+    description: Implement effective caching to reduce load
+    severity: high
+    guidelines:
+      - Cache frequently accessed data
+      - Use appropriate cache TTLs
+      - Implement cache invalidation strategies
+      - Use Redis or Memcached for distributed caching
+      - Cache at multiple levels (application, database, CDN)
+      - Monitor cache hit rates
+      - Implement cache warming for critical data
+    
+  - id: PERF-004
+    title: API Optimization
+    description: Optimize API performance and efficiency
+    severity: high
+    guidelines:
+      - Implement pagination for list endpoints
+      - Use field filtering to return only requested data
+      - Implement compression (gzip) for responses
+      - Use HTTP caching headers (ETag, Cache-Control)
+      - Batch API requests when possible
+      - Implement GraphQL for flexible data fetching
+      - Use API rate limiting to prevent abuse
+    
+  - id: PERF-005
+    title: Asynchronous Processing
+    description: Use async processing for non-blocking operations
+    severity: high
+    guidelines:
+      - Use message queues for background tasks
+      - Implement async/await patterns
+      - Use worker pools for parallel processing
+      - Implement job queues (Celery, Bull)
+      - Provide status endpoints for long-running tasks
+      - Use webhooks or polling for task completion
+      - Implement retry logic for failed tasks
+    
+  - id: PERF-006
+    title: Resource Management
+    description: Efficiently manage system resources
+    severity: medium
+    guidelines:
+      - Close database connections properly
+      - Release file handles and network connections
+      - Implement connection pooling
+      - Use streaming for large data transfers
+      - Limit memory usage for large operations
+      - Implement garbage collection tuning
+      - Monitor resource utilization
+    
+  - id: PERF-007
+    title: Frontend Performance
+    description: Optimize frontend loading and rendering
+    severity: medium
+    guidelines:
+      - Minimize bundle sizes (code splitting)
+      - Lazy load components and routes
+      - Optimize images (compression, WebP)
+      - Use CDN for static assets
+      - Implement service workers for offline support
+      - Minimize render-blocking resources
+      - Use virtual scrolling for large lists
+      - Implement debouncing and throttling
+    
+  - id: PERF-008
+    title: Scalability Design
+    description: Design systems to scale horizontally
+    severity: high
+    guidelines:
+      - Design stateless services
+      - Use load balancers for traffic distribution
+      - Implement auto-scaling policies
+      - Use microservices for independent scaling
+      - Implement database sharding for large datasets
+      - Use message queues for decoupling
+      - Design for eventual consistency
+    
+  - id: PERF-009
+    title: Monitoring and Profiling
+    description: Monitor performance and identify bottlenecks
+    severity: high
+    guidelines:
+      - Implement application performance monitoring (APM)
+      - Track key performance metrics (latency, throughput)
+      - Use distributed tracing for request flows
+      - Profile code to identify slow operations
+      - Monitor database query performance
+      - Set up alerts for performance degradation
+      - Conduct regular performance testing
+    
+  - id: PERF-010
+    title: Network Optimization
+    description: Optimize network usage and latency
+    severity: medium
+    guidelines:
+      - Minimize number of network requests
+      - Use HTTP/2 or HTTP/3 for multiplexing
+      - Implement request batching
+      - Use WebSockets for real-time communication
+      - Optimize payload sizes
+      - Use compression for data transfer
+      - Implement CDN for global distribution
+    
+  - id: PERF-011
+    title: Concurrency and Parallelism
+    description: Handle concurrent operations efficiently
+    severity: high
+    guidelines:
+      - Use thread pools or process pools
+      - Implement proper locking mechanisms
+      - Avoid race conditions and deadlocks
+      - Use async I/O for I/O-bound operations
+      - Implement circuit breakers for external services
+      - Use bulkheads to isolate failures
+      - Test under concurrent load
+    
+  - id: PERF-012
+    title: Memory Management
+    description: Optimize memory usage and prevent leaks
+    severity: high
+    guidelines:
+      - Avoid memory leaks (close connections, clear references)
+      - Use streaming for large data processing
+      - Implement pagination for large result sets
+      - Monitor memory usage and set limits
+      - Use memory profiling tools
+      - Implement garbage collection strategies
+      - Avoid loading entire datasets into memory
+
+applies_to:
+  - backend
+  - frontend
+  - database
+  - api
+  - infrastructure
+
+enforcement: required
+
+validation:
+  - Verify response time requirements are met
+  - Check database queries are optimized
+  - Verify caching is implemented
+  - Check for async processing of long tasks
+  - Verify monitoring is in place
+  - Check scalability considerations

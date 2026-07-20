@@ -1,0 +1,176 @@
+id: testing-001
+name: Testing Standards and Best Practices
+version: 1.0.0
+category: testing
+status: active
+description: Standard testing practices for comprehensive test coverage and quality assurance
+
+rules:
+  - id: TEST-001
+    title: Test Coverage Requirements
+    description: Maintain adequate test coverage across the codebase
+    severity: high
+    guidelines:
+      - Achieve minimum 80% code coverage for business logic
+      - Test all critical paths and edge cases
+      - Include both positive and negative test cases
+      - Test error handling and exception paths
+      - Measure and track coverage metrics
+      - Focus on meaningful coverage, not just numbers
+    
+  - id: TEST-002
+    title: Unit Testing
+    description: Write comprehensive unit tests for individual components
+    severity: high
+    guidelines:
+      - Test each function/method in isolation
+      - Use mocks and stubs for external dependencies
+      - Follow AAA pattern (Arrange, Act, Assert)
+      - Keep tests fast (< 100ms per test)
+      - Use descriptive test names that explain what is being tested
+      - Test one thing per test case
+      - Avoid test interdependencies
+    
+  - id: TEST-003
+    title: Integration Testing
+    description: Test component interactions and system integration
+    severity: high
+    guidelines:
+      - Test API endpoints end-to-end
+      - Test database interactions with real database
+      - Test external service integrations
+      - Use test containers for dependencies (Docker)
+      - Test authentication and authorization flows
+      - Verify data persistence and retrieval
+      - Test error scenarios and rollbacks
+    
+  - id: TEST-004
+    title: Test Data Management
+    description: Manage test data effectively and consistently
+    severity: medium
+    guidelines:
+      - Use factories or builders for test data creation
+      - Create realistic test data that represents production scenarios
+      - Use fixtures for common test data
+      - Clean up test data after each test
+      - Avoid hardcoded test data in tests
+      - Use data generators for property-based testing
+      - Maintain separate test databases
+    
+  - id: TEST-005
+    title: Test Organization
+    description: Organize tests in a clear and maintainable structure
+    severity: medium
+    guidelines:
+      - Mirror source code structure in test directory
+      - Group related tests in test suites
+      - Use clear test file naming (test_*.py, *.test.js)
+      - Separate unit, integration, and e2e tests
+      - Use test tags/markers for selective execution
+      - Keep test files focused and manageable
+    
+  - id: TEST-006
+    title: Test Assertions
+    description: Write clear and meaningful test assertions
+    severity: medium
+    guidelines:
+      - Use specific assertions (assertEqual, not assertTrue)
+      - Include descriptive assertion messages
+      - Assert on behavior, not implementation details
+      - Verify all relevant outcomes
+      - Use custom matchers for complex assertions
+      - Avoid multiple unrelated assertions in one test
+    
+  - id: TEST-007
+    title: Test Maintainability
+    description: Write maintainable and readable tests
+    severity: medium
+    guidelines:
+      - Keep tests simple and easy to understand
+      - Avoid complex logic in tests
+      - Use helper functions for common test operations
+      - Refactor tests when they become hard to maintain
+      - Update tests when requirements change
+      - Remove obsolete tests
+      - Document complex test scenarios
+    
+  - id: TEST-008
+    title: Performance Testing
+    description: Test system performance and scalability
+    severity: medium
+    guidelines:
+      - Identify performance-critical operations
+      - Set performance benchmarks and SLAs
+      - Test with realistic data volumes
+      - Test concurrent user scenarios
+      - Measure response times and throughput
+      - Test database query performance
+      - Profile and optimize slow operations
+    
+  - id: TEST-009
+    title: Security Testing
+    description: Test security aspects of the application
+    severity: high
+    guidelines:
+      - Test authentication and authorization
+      - Test input validation and sanitization
+      - Test for SQL injection vulnerabilities
+      - Test for XSS vulnerabilities
+      - Test API rate limiting
+      - Test password policies and encryption
+      - Scan dependencies for vulnerabilities
+    
+  - id: TEST-010
+    title: Test Automation
+    description: Automate test execution and reporting
+    severity: high
+    guidelines:
+      - Run tests automatically on every commit (CI/CD)
+      - Generate test reports with coverage metrics
+      - Fail builds on test failures
+      - Run different test suites at appropriate stages
+      - Implement test result notifications
+      - Track test execution trends over time
+      - Automate regression testing
+    
+  - id: TEST-011
+    title: API Testing
+    description: Comprehensive testing of API endpoints
+    severity: high
+    guidelines:
+      - Test all HTTP methods (GET, POST, PUT, DELETE)
+      - Test request validation and error responses
+      - Test authentication and authorization
+      - Test rate limiting and throttling
+      - Verify response status codes and formats
+      - Test pagination and filtering
+      - Test API versioning
+    
+  - id: TEST-012
+    title: Database Testing
+    description: Test database operations and data integrity
+    severity: high
+    guidelines:
+      - Test CRUD operations
+      - Test database constraints and validations
+      - Test transactions and rollbacks
+      - Test database migrations
+      - Test query performance
+      - Test data relationships and foreign keys
+      - Verify data consistency
+
+applies_to:
+  - unit_tests
+  - integration_tests
+  - e2e_tests
+  - api_tests
+
+enforcement: required
+
+validation:
+  - Verify minimum code coverage is met
+  - Check test naming conventions
+  - Verify test isolation (no interdependencies)
+  - Check for proper test data cleanup
+  - Verify CI/CD integration
+  - Check for security test coverage
