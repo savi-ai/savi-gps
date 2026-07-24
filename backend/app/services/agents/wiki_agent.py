@@ -135,6 +135,12 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         llm_provider = gen_settings.get("llm_provider") or settings.LLM_PROVIDER
         llm_model = gen_settings.get("llm_model")
 
+        refresh_plan = state.get("wiki_refresh_plan")
+        previous_wiki_json = state.get("previous_wiki_json")
+        git_head = state.get("git_head")
+        refresh_mode = getattr(refresh_plan, "mode", None) if refresh_plan else state.get("wiki_refresh_mode")
+        refresh_reason = getattr(refresh_plan, "reason", None) if refresh_plan else state.get("wiki_refresh_reason")
+
         shell_invoked = False
         shell_succeeded = False
         generation_source = "wiki_agent_fallback"
@@ -146,7 +152,40 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         allow_api = generation_mode in ("api", "auto")
         allow_fallback = generation_mode != "cli"  # cli-only: no silent heuristic unless API also failed path
 
-        if allow_cli:
+        # Incremental updates use the API path (patch prior wiki from git diffs).
+        # CLI shell scripts always regenerate fully.
+        if (
+            refresh_mode == "incremental"
+            and previous_wiki_json
+            and allow_api
+            and clone_path
+            and refresh_plan
+        ):
+            try:
+                from app.services.intelligence.wiki_git_refresh import (
+                    format_incremental_prompt_context,
+                )
+
+                change_ctx = format_incremental_prompt_context(refresh_plan, str(clone_path))
+                wiki_json = await self._generate_incremental_via_llm(
+                    repo_name=repo_name,
+                    repo_full_name=repo_full_name,
+                    previous_wiki=previous_wiki_json,
+                    change_context=change_ctx,
+                    chunks=chunks,
+                    attribute_definitions=attribute_definitions,
+                    provider=llm_provider,
+                    model_id=llm_model,
+                )
+                generation_source = f"wiki_agent_llm_incremental:{llm_provider}"
+            except Exception as e:
+                logger.warning(
+                    "Incremental wiki LLM failed (%s); falling back to full generation",
+                    redact_secrets(str(e)),
+                )
+                wiki_json = None
+
+        if not wiki_json and allow_cli:
             shell_invoked = True
             shell_result = self._run_shell_agent(
                 org_name=org_name,
@@ -245,6 +284,9 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 "generation_mode": generation_mode,
                 "llm_provider": llm_provider,
                 "llm_model": llm_model,
+                "git_head": git_head,
+                "wiki_refresh_mode": refresh_mode or "full",
+                "wiki_refresh_reason": refresh_reason,
             },
         )
 
@@ -258,6 +300,9 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         state["shell_invoked"] = shell_invoked
         state["shell_succeeded"] = shell_succeeded
         state["analysis_paths"] = paths
+        state["git_head"] = git_head
+        state["wiki_refresh_mode"] = refresh_mode or "full"
+        state["wiki_refresh_reason"] = refresh_reason
         return state
 
     def _run_shell_agent(
@@ -355,6 +400,81 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             lines.append(block)
             total += len(block)
         return "\n".join(lines)
+
+    async def _generate_incremental_via_llm(
+        self,
+        *,
+        repo_name: str,
+        repo_full_name: str,
+        previous_wiki: Dict[str, Any],
+        change_context: str,
+        chunks: List[FileChunk],
+        attribute_definitions: List[Dict],
+        provider: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update prior wiki JSON using git change context (full JSON response)."""
+        from app.core.llm_client import get_llm_client
+
+        llm = get_llm_client(provider, model_id=model_id if provider == "bedrock" else None)
+        attr_keys = [
+            {"key": d.get("key"), "label": d.get("label"), "hint": d.get("extraction_hint")}
+            for d in attribute_definitions
+        ]
+        # Prefer snippets from changed paths when available
+        impl_snippets = self._implementation_snippets(chunks, max_chars=8000)
+        prior = json.dumps(previous_wiki, indent=2)
+        if len(prior) > 50000:
+            prior = prior[:50000] + "\n… [prior wiki truncated] …\n"
+
+        prompt = f"""Update the existing repository wiki JSON for {repo_name} ({repo_full_name}).
+
+You are given the PREVIOUS wiki JSON and a git change set since that wiki was generated.
+Return a COMPLETE updated wiki JSON (same schema) — not a patch.
+- Preserve accurate sections that are unaffected by the changes.
+- Revise overview, architecture, business_logic_layer, diagrams, api_surface, etc. when changes warrant it.
+- Do not invent files or APIs not supported by the change context / snippets.
+- Omit or mark "Not detected" when evidence is missing.
+
+Git changes:
+{change_context}
+
+Attribute definitions:
+{json.dumps(attr_keys, indent=2)}
+
+Implementation snippets (may include files outside the diff):
+{impl_snippets}
+
+PREVIOUS wiki JSON:
+{prior}
+
+Return compact JSON only (no markdown fences) with the same keys as a full wiki:
+repo_name, overview, functionality, tech_stack, business_logic_layer,
+analysis_attributes, diagrams, api_surface, data_flow, database, build_deploy,
+run_locally, observability.
+"""
+        response = await llm.generate(
+            prompt=prompt,
+            system_prompt=self.SYSTEM_PROMPT,
+            max_tokens=8192,
+            temperature=0.2,
+        )
+        try:
+            return _parse_llm_json(response)
+        except json.JSONDecodeError as first_err:
+            logger.warning(
+                "Incremental wiki JSON parse failed, retrying repair: %s", first_err
+            )
+            repair = await llm.generate(
+                prompt=(
+                    "Fix this into valid JSON only. Return the corrected JSON object, "
+                    "no markdown fences:\n\n" + response[:60000]
+                ),
+                system_prompt="Return strict valid JSON only.",
+                max_tokens=8192,
+                temperature=0,
+            )
+            return _parse_llm_json(repair)
 
     async def _generate_via_llm(
         self,

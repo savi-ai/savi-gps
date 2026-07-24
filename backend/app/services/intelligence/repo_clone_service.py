@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 from app.core.logger import logger
@@ -73,6 +73,48 @@ class RepoCloneService:
             raise RuntimeError("Git clone timed out after 300s") from e
 
         return temp_dir
+
+    def ensure_clone(
+        self,
+        url: str,
+        branch: str,
+        token: Optional[str] = None,
+        clone_path: Optional[str] = None,
+    ) -> Tuple[str, bool]:
+        """Return (path, owned).
+
+        If ``clone_path`` is a usable git work tree, reuse it (owned=False).
+        Otherwise shallow-clone and return owned=True so the caller can cleanup.
+        """
+        if clone_path and self.is_git_work_tree(clone_path):
+            return clone_path, False
+        path = self.shallow_clone(url, branch, token=token)
+        return path, True
+
+    @staticmethod
+    def is_git_work_tree(path: Optional[str]) -> bool:
+        if not path or not os.path.isdir(path):
+            return False
+        git_dir = os.path.join(path, ".git")
+        if not (os.path.isdir(git_dir) or os.path.isfile(git_dir)):
+            return False
+        try:
+            result = subprocess.run(
+                ["git", "-C", path, "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            return result.returncode == 0 and (result.stdout or "").strip() == "true"
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    @staticmethod
+    def get_head_sha(path: str) -> Optional[str]:
+        from app.services.intelligence.wiki_git_refresh import get_repo_head
+
+        return get_repo_head(path)
 
     @staticmethod
     def cleanup(path: str) -> None:

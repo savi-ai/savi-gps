@@ -17,6 +17,7 @@ __pycache__/
 *.so
 .Python
 .pytest_cache/
+.pytest_git_tmp/
 .mypy_cache/
 .ruff_cache/
 .coverage

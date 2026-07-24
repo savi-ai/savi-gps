@@ -31,11 +31,16 @@ class GitHubClient:
         method: str,
         path: str,
         params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
     ) -> Any:
         url = path if path.startswith("http") else f"{GITHUB_API}{path}"
         async with aiohttp.ClientSession() as session:
             async with session.request(
-                method, url, headers=self._headers, params=params
+                method,
+                url,
+                headers=self._headers,
+                params=params,
+                json=json_body,
             ) as resp:
                 if resp.status == 401:
                     raise GitHubApiError(401, "Invalid or expired GitHub token")
@@ -46,6 +51,9 @@ class GitHubClient:
                     raise GitHubApiError(403, "GitHub token lacks required permissions")
                 if resp.status == 404:
                     raise GitHubApiError(404, "GitHub resource not found")
+                if resp.status == 422:
+                    detail = await resp.text()
+                    raise GitHubApiError(422, detail[:800] or "Unprocessable entity")
                 if resp.status >= 400:
                     detail = await resp.text()
                     raise GitHubApiError(resp.status, detail[:500] or resp.reason)
@@ -188,3 +196,97 @@ class GitHubClient:
         repo = await self._request("GET", f"/repos/{owner}/{name}")
         org_key = owner if repo.get("owner", {}).get("type") == "Organization" else PERSONAL_ORG_KEY
         return self._normalize_repo(repo, org_key)
+
+    async def get_ref_sha(self, owner: str, repo: str, ref: str) -> str:
+        """Resolve branch/tag ref to commit SHA. ``ref`` like ``heads/main``."""
+        data = await self._request("GET", f"/repos/{owner}/{repo}/git/ref/{ref}")
+        obj = data.get("object") or {}
+        sha = obj.get("sha")
+        if not sha:
+            raise GitHubApiError(404, f"No SHA for ref {ref}")
+        return sha
+
+    async def create_branch(
+        self, owner: str, repo: str, branch: str, from_sha: str
+    ) -> None:
+        try:
+            await self._request(
+                "POST",
+                f"/repos/{owner}/{repo}/git/refs",
+                json_body={"ref": f"refs/heads/{branch}", "sha": from_sha},
+            )
+        except GitHubApiError as e:
+            if e.status == 422 and "already exists" in (e.message or "").lower():
+                # Update existing branch tip
+                await self._request(
+                    "PATCH",
+                    f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+                    json_body={"sha": from_sha, "force": True},
+                )
+                return
+            raise
+
+    async def put_file(
+        self,
+        owner: str,
+        repo: str,
+        path: str,
+        content: str,
+        message: str,
+        branch: str,
+        *,
+        sha: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a single file via Contents API (UTF-8 text)."""
+        import base64
+
+        body: Dict[str, Any] = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "branch": branch,
+        }
+        if sha:
+            body["sha"] = sha
+        return await self._request(
+            "PUT",
+            f"/repos/{owner}/{repo}/contents/{path.lstrip('/')}",
+            json_body=body,
+        )
+
+    async def get_file_sha(
+        self, owner: str, repo: str, path: str, ref: str
+    ) -> Optional[str]:
+        try:
+            data = await self._request(
+                "GET",
+                f"/repos/{owner}/{repo}/contents/{path.lstrip('/')}",
+                params={"ref": ref},
+            )
+            if isinstance(data, dict):
+                return data.get("sha")
+        except GitHubApiError as e:
+            if e.status == 404:
+                return None
+            raise
+        return None
+
+    async def create_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls",
+            json_body={
+                "title": title,
+                "body": body,
+                "head": head,
+                "base": base,
+            },
+        )

@@ -40,6 +40,10 @@ class LlmSettingsUpdateRequest(BaseModel):
         None, description="claude | openai | bedrock | ollama | empty to inherit"
     )
     llm_model: Optional[str] = Field(None, description="Model / Bedrock model ID")
+    wiki_github_export_enabled: Optional[bool] = Field(
+        None,
+        description="When true, open a PR pushing wiki markdown under WIKI_GITHUB_EXPORT_PATH",
+    )
 
 
 @router.get("/me")

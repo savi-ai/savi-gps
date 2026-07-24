@@ -1,8 +1,10 @@
 """Orchestrates Wiki Agent during repository indexing."""
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -12,14 +14,22 @@ from app.core.logger import logger
 from app.services.agents.wiki_agent import WikiAgent
 from app.services.intelligence.analysis_config_service import AnalysisConfigService
 from app.services.intelligence.analysis_storage import (
+    META_NAME,
     get_analysis_dir,
+    mark_completed,
     mark_failed,
     mark_started,
     write_analysis_config,
 )
 from app.services.intelligence.citation_verifier import CitationVerifier
 from app.services.intelligence.code_chunker import FileChunk
+from app.services.intelligence.github_credential_service import GitHubCredentialService
 from app.services.intelligence.repo_attribute_extractor import extract_attributes
+from app.services.intelligence.repo_clone_service import RepoCloneService
+from app.services.intelligence.wiki_git_refresh import (
+    load_previous_wiki_json,
+    plan_wiki_refresh,
+)
 
 
 class WikiAgentService:
@@ -36,6 +46,15 @@ class WikiAgentService:
         self.analysis_svc = AnalysisConfigService(db)
         self.verifier = CitationVerifier(db)
 
+    def _resolve_clone_token(self, repository: Repository) -> Optional[str]:
+        if not repository.github_credential_id:
+            return None
+        cred_svc = GitHubCredentialService(self.db)
+        cred = cred_svc.get_credential(repository.tenant_id, repository.github_credential_id)
+        if not cred:
+            return None
+        return cred_svc.get_token(cred)
+
     async def generate_for_repository(
         self,
         repository: Repository,
@@ -48,62 +67,179 @@ class WikiAgentService:
         definitions = self.analysis_svc.list_definitions(repository.tenant_id)
 
         analysis_dir = get_analysis_dir(repository)
-        mark_started(analysis_dir)
-        write_analysis_config(analysis_dir, definitions)
 
-        logger.info(
-            f"Wiki Agent starting for {repository.github_full_name or repository.name} "
-            f"→ {analysis_dir}"
-        )
+        # Load prior wiki BEFORE mark_started so incremental planning can use it.
+        previous_wiki = load_previous_wiki_json(analysis_dir)
 
-        # Deterministic attribute extraction from clone
-        extracted = []
-        if clone_path:
-            extracted = extract_attributes(clone_path, definitions)
-
-        agent = WikiAgent()
+        clone_svc = RepoCloneService()
+        owned_clone = False
         try:
+            clone_path, owned_clone = clone_svc.ensure_clone(
+                repository.url,
+                repository.default_branch or "main",
+                token=self._resolve_clone_token(repository),
+                clone_path=clone_path,
+            )
+
+            refresh_plan = plan_wiki_refresh(
+                clone_path=clone_path,
+                analysis_dir=analysis_dir,
+            )
+            git_head = refresh_plan.current_head or clone_svc.get_head_sha(clone_path)
+
+            logger.info(
+                "Wiki refresh plan for %s: mode=%s reason=%s head=%s prior=%s",
+                repository.github_full_name or repository.name,
+                refresh_plan.mode,
+                refresh_plan.reason,
+                (git_head or "")[:12],
+                (refresh_plan.previous_head or "")[:12],
+            )
+
+            if refresh_plan.mode == "unchanged" and previous_wiki:
+                return self._skip_unchanged_wiki(
+                    repository=repository,
+                    analysis_dir=analysis_dir,
+                    previous_wiki=previous_wiki,
+                    git_head=git_head,
+                    index_run_id=index_run_id,
+                    refresh_reason=refresh_plan.reason,
+                )
+
+            mark_started(analysis_dir)
+            write_analysis_config(analysis_dir, definitions)
+
+            logger.info(
+                f"Wiki Agent starting for {repository.github_full_name or repository.name} "
+                f"→ {analysis_dir}"
+            )
+
+            extracted = []
+            if clone_path:
+                extracted = extract_attributes(clone_path, definitions)
+
+            agent = WikiAgent()
             from app.services.intelligence.wiki_generation_settings import (
                 resolve_wiki_generation_settings,
             )
 
             gen_settings = resolve_wiki_generation_settings(self.db, repository.tenant_id)
-            state = await agent.process({
-                "repository": {
-                    "name": repository.name,
-                    "url": repository.url,
-                    "github_full_name": repository.github_full_name,
-                    "github_org": repository.github_org,
-                    "github_owner": repository.github_owner,
-                    "default_branch": repository.default_branch,
-                },
-                "repository_id": repository.id,
-                "tenant_id": repository.tenant_id,
-                "chunks": chunks,
-                "loc": loc,
-                "clone_path": clone_path,
-                "output_dir": analysis_dir,
-                "index_run_id": index_run_id,
-                "attribute_definitions": definitions,
-                "wiki_generation_settings": gen_settings,
-            })
-        except Exception:
-            mark_failed(analysis_dir)
-            raise
+            try:
+                state = await agent.process({
+                    "repository": {
+                        "name": repository.name,
+                        "url": repository.url,
+                        "github_full_name": repository.github_full_name,
+                        "github_org": repository.github_org,
+                        "github_owner": repository.github_owner,
+                        "default_branch": repository.default_branch,
+                    },
+                    "repository_id": repository.id,
+                    "tenant_id": repository.tenant_id,
+                    "chunks": chunks,
+                    "loc": loc,
+                    "clone_path": clone_path,
+                    "output_dir": analysis_dir,
+                    "index_run_id": index_run_id,
+                    "attribute_definitions": definitions,
+                    "wiki_generation_settings": gen_settings,
+                    "wiki_refresh_plan": refresh_plan,
+                    "previous_wiki_json": previous_wiki,
+                    "git_head": git_head,
+                })
+            except Exception:
+                mark_failed(analysis_dir)
+                raise
 
+            return await self._persist_wiki_result(
+                repository=repository,
+                state=state,
+                extracted=extracted,
+                definitions=definitions,
+                analysis_dir=analysis_dir,
+                index_run_id=index_run_id,
+                git_head=git_head,
+                refresh_plan=refresh_plan,
+            )
+        finally:
+            if owned_clone and clone_path:
+                clone_svc.cleanup(clone_path)
+
+    def _skip_unchanged_wiki(
+        self,
+        *,
+        repository: Repository,
+        analysis_dir: Path,
+        previous_wiki: Dict[str, Any],
+        git_head: Optional[str],
+        index_run_id: Optional[str],
+        refresh_reason: str,
+    ) -> Dict[str, Any]:
+        """HEAD matches last wiki — keep existing DB wiki and bump meta only."""
+        mark_completed(analysis_dir)
+        meta_path = analysis_dir / META_NAME
+        meta: Dict[str, Any] = {}
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        meta.update({
+            "git_head": git_head,
+            "wiki_refresh_mode": "unchanged",
+            "wiki_refresh_reason": refresh_reason,
+            "index_run_id": index_run_id or meta.get("index_run_id"),
+            "written_at": datetime.now().isoformat(),
+            "generation_source": meta.get("generation_source") or "wiki_unchanged",
+        })
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+        site = self.get_wiki_site(repository.id)
+        page_count = (
+            self.db.query(WikiPage)
+            .filter(WikiPage.repository_id == repository.id)
+            .count()
+        )
+        logger.info(
+            "Wiki unchanged for %s (git_head=%s) — skipped regeneration",
+            repository.id,
+            (git_head or "")[:12],
+        )
+        return {
+            "wiki_site_id": site.id if site else None,
+            "attribute_count": len(previous_wiki.get("analysis_attributes") or []),
+            "page_count": page_count,
+            "analysis_dir": str(analysis_dir),
+            "generation_source": "wiki_unchanged",
+            "shell_succeeded": False,
+            "wiki_refresh_mode": "unchanged",
+            "git_head": git_head,
+        }
+
+    async def _persist_wiki_result(
+        self,
+        *,
+        repository: Repository,
+        state: Dict[str, Any],
+        extracted: List[Any],
+        definitions: List[Dict],
+        analysis_dir: Path,
+        index_run_id: Optional[str],
+        git_head: Optional[str],
+        refresh_plan: Any,
+    ) -> Dict[str, Any]:
         wiki_json = state.get("wiki_json", {})
         wiki_html = state.get("wiki_html", "")
         sections_md = state.get("sections_md") or wiki_json.get("sections_md") or {}
         generation_source = state.get("generation_source", "wiki_agent")
         analysis_paths = state.get("analysis_paths", {})
+        wiki_md = state.get("wiki_md")
 
-        # Merge deterministic + LLM analysis attributes
         merged_attrs = self._merge_attributes(
             extracted, wiki_json.get("analysis_attributes") or [], definitions
         )
         wiki_json["analysis_attributes"] = merged_attrs
 
-        # Persist analysis attributes (searchable fleet metadata)
         self.analysis_svc.save_repository_attributes(
             repository.tenant_id,
             repository.id,
@@ -111,7 +247,6 @@ class WikiAgentService:
             merged_attrs,
         )
 
-        # Replace prior wiki site + pages
         self._clear_prior_wiki(repository.id)
 
         wiki_json["_storage"] = {
@@ -119,6 +254,8 @@ class WikiAgentService:
             "generation_source": generation_source,
             "shell_invoked": state.get("shell_invoked", False),
             "shell_succeeded": state.get("shell_succeeded", False),
+            "git_head": git_head,
+            "wiki_refresh_mode": getattr(refresh_plan, "mode", None),
             **analysis_paths,
         }
 
@@ -162,19 +299,46 @@ class WikiAgentService:
             self.verifier.verify_page(page)
 
         self.db.commit()
+
+        export_result = None
+        try:
+            from app.services.intelligence.wiki_github_export_service import (
+                WikiGitHubExportService,
+            )
+
+            export_result = await WikiGitHubExportService(self.db).maybe_export_after_wiki(
+                repository,
+                analysis_dir=analysis_dir,
+                wiki_md=wiki_md,
+                sections_md=sections_md if isinstance(sections_md, dict) else None,
+                index_run_id=index_run_id,
+            )
+        except Exception as export_err:
+            logger.warning(
+                "Wiki GitHub export hook failed for %s: %s",
+                repository.id,
+                export_err,
+            )
+
         logger.info(
             f"Wiki Agent completed for {repository.id}: "
             f"{len(merged_attrs)} attributes, source={generation_source}, "
+            f"refresh={getattr(refresh_plan, 'mode', None)}, "
             f"artifacts={analysis_dir}"
         )
-        return {
+        result = {
             "wiki_site_id": site.id,
             "attribute_count": len(merged_attrs),
             "page_count": len(pages),
             "analysis_dir": str(analysis_dir),
             "generation_source": generation_source,
             "shell_succeeded": state.get("shell_succeeded", False),
+            "wiki_refresh_mode": getattr(refresh_plan, "mode", None),
+            "git_head": git_head,
         }
+        if export_result:
+            result["github_export"] = export_result
+        return result
 
     def get_wiki_site(self, repository_id: str) -> Optional[RepositoryWikiSite]:
         return (

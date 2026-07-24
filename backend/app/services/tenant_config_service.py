@@ -44,6 +44,8 @@ DEFAULT_LLM_SETTINGS = {
     "wiki_generation_mode": None,  # cli | api | auto
     "llm_provider": None,  # claude | openai | bedrock | ollama
     "llm_model": None,
+    # Push generated wiki markdown into the linked GitHub repo as a PR
+    "wiki_github_export_enabled": False,
 }
 
 
@@ -148,6 +150,12 @@ class TenantConfigService:
             out["llm_provider"] = provider
         if raw.get("llm_model"):
             out["llm_model"] = str(raw["llm_model"])[:200]
+        out["wiki_github_export_enabled"] = bool(
+            raw.get(
+                "wiki_github_export_enabled",
+                DEFAULT_LLM_SETTINGS["wiki_github_export_enabled"],
+            )
+        )
         return out
 
     def update_llm_settings(
@@ -178,6 +186,10 @@ class TenantConfigService:
                 current.pop("llm_model", None)
             else:
                 current["llm_model"] = str(model)[:200]
+        if "wiki_github_export_enabled" in settings_update:
+            current["wiki_github_export_enabled"] = bool(
+                settings_update["wiki_github_export_enabled"]
+            )
         caps[LLM_SETTINGS_KEY] = current
         self._preserve_bags(caps, config.capabilities or {})
         for key in ALL_CAPABILITY_KEYS:
@@ -247,6 +259,13 @@ class TenantConfigService:
                 "wiki_generation_mode": llm_raw.get("wiki_generation_mode"),
                 "llm_provider": llm_raw.get("llm_provider"),
                 "llm_model": llm_raw.get("llm_model"),
+                "wiki_github_export_enabled": bool(
+                    llm_raw.get(
+                        "wiki_github_export_enabled",
+                        DEFAULT_LLM_SETTINGS["wiki_github_export_enabled"],
+                    )
+                ),
+                "wiki_github_export_path": settings.WIKI_GITHUB_EXPORT_PATH,
             },
             "llm_status": env_llm_status(),
             "onboarding_path": config.onboarding_path,

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 3
     # Wiki generation: cli | api | auto (CLI then API then heuristic)
     WIKI_GENERATION_MODE: str = "auto"
+    # Incremental wiki: compare last stored git_head to clone HEAD
+    WIKI_INCREMENTAL_ENABLED: bool = True
+    WIKI_INCREMENTAL_MAX_FILES: int = 40
+    WIKI_INCREMENTAL_MAX_DIFF_CHARS: int = 24000
+    # Repo-relative path for optional GitHub wiki export (also ignored for regen)
+    WIKI_GITHUB_EXPORT_PATH: str = "docs/savi-wiki"
 
     # SOP Configuration
     SOP_DIRECTORY: str = str(Path(__file__).parent.parent.parent / "sops")
