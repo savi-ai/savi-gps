@@ -63,6 +63,11 @@ class WikiAgentService:
 
         agent = WikiAgent()
         try:
+            from app.services.intelligence.wiki_generation_settings import (
+                resolve_wiki_generation_settings,
+            )
+
+            gen_settings = resolve_wiki_generation_settings(self.db, repository.tenant_id)
             state = await agent.process({
                 "repository": {
                     "name": repository.name,
@@ -73,12 +78,14 @@ class WikiAgentService:
                     "default_branch": repository.default_branch,
                 },
                 "repository_id": repository.id,
+                "tenant_id": repository.tenant_id,
                 "chunks": chunks,
                 "loc": loc,
                 "clone_path": clone_path,
                 "output_dir": analysis_dir,
                 "index_run_id": index_run_id,
                 "attribute_definitions": definitions,
+                "wiki_generation_settings": gen_settings,
             })
         except Exception:
             mark_failed(analysis_dir)

@@ -32,6 +32,16 @@ class AssessmentSettingsUpdateRequest(BaseModel):
     auto_assess_on_application_analysis: Optional[bool] = None
 
 
+class LlmSettingsUpdateRequest(BaseModel):
+    wiki_generation_mode: Optional[str] = Field(
+        None, description="cli | api | auto | empty to inherit env"
+    )
+    llm_provider: Optional[str] = Field(
+        None, description="claude | openai | bedrock | ollama | empty to inherit"
+    )
+    llm_model: Optional[str] = Field(None, description="Model / Bedrock model ID")
+
+
 @router.get("/me")
 async def get_my_tenant_config(
     user: User = Depends(get_current_user),
@@ -65,6 +75,28 @@ async def update_assessment_settings(
         )
     service = TenantConfigService(db)
     config = service.update_assessment_settings(user.tenant_id, updates)
+    return service.to_dict(config)
+
+
+@router.patch("/llm-settings")
+async def update_llm_settings(
+    request: LlmSettingsUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Tenant overrides for wiki generation mode / provider (secrets stay in server env)."""
+    if not user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    if not has_permission(user, "can_manage_tenant_config", db):
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    updates = request.model_dump(exclude_unset=True)
+    service = TenantConfigService(db)
+    try:
+        config = service.update_llm_settings(user.tenant_id, updates)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("Tenant %s updated llm settings %s", user.tenant_id, list(updates.keys()))
     return service.to_dict(config)
 
 
