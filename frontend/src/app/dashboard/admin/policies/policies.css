@@ -7,9 +7,119 @@
 .policies-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 1rem;
   gap: 1rem;
+}
+
+.policies-header-sub {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: #6b7280;
+  max-width: 42rem;
+  line-height: 1.4;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.chip-tag {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.policy-detail-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+}
+
+.policy-detail-section {
+  margin-bottom: 1.5rem;
+}
+
+.policy-detail-section h2 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.checks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.check-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #fafafa;
+}
+
+.check-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.check-type {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.check-description {
+  font-weight: 600;
+  color: #111827;
+}
+
+.check-body {
+  margin: 0.5rem 0 0;
+  color: #4b5563;
+  font-size: 0.875rem;
+}
+
+.check-detail {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.remediation-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.remediation-item {
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.policy-markdown {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 1rem;
+  overflow: auto;
+  max-height: 32rem;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .policies-title {
@@ -37,6 +147,8 @@
   height: fit-content;
   position: sticky;
   top: 1rem;
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 

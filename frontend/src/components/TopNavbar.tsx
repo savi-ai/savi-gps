@@ -37,7 +37,7 @@ const SEGMENT_TITLES: Record<string, string> = {
   trends: 'Trends',
   admin: 'Admin',
   policies: 'Policies',
-  sops: 'SOPs',
+  sops: 'Policies',
   'wiki-review': 'Wiki Review',
   'analysis-config': 'Analysis Config',
   'tenant-settings': 'Tenant Settings',

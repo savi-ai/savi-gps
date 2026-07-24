@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/axios'
@@ -32,15 +32,31 @@ const CATEGORIES = [
   { id: 'coding', name: 'Coding' },
   { id: 'testing', name: 'Testing' },
   { id: 'security', name: 'Security' },
+  { id: 'performance', name: 'Performance' },
   { id: 'infra', name: 'Infrastructure' },
-  { id: 'building_blocks', name: 'Building Blocks' }
+  { id: 'infrastructure', name: 'Infrastructure (alt)' },
+  { id: 'ci_cd', name: 'CI/CD' },
+  { id: 'building_blocks', name: 'Building Blocks' },
 ]
 
 const STATUSES = [
-  { id: 'draft', name: 'Draft', color: 'gray' },
-  { id: 'active', name: 'Active', color: 'green' },
-  { id: 'deprecated', name: 'Deprecated', color: 'red' }
+  { id: 'draft', name: 'Draft' },
+  { id: 'active', name: 'Active' },
+  { id: 'deprecated', name: 'Deprecated' },
 ]
+
+const APPLIES_TO = [
+  'story',
+  'architecture',
+  'backend',
+  'frontend',
+  'pipeline',
+  'infra',
+]
+
+const STACKS = ['Java/Spring', 'Next/React', 'Nuxt/Vue']
+
+const COMMON_TAGS = ['sop', 'PII', 'PCI', 'Public API', 'Internal', 'security', 'required']
 
 export default function PoliciesPage() {
   const router = useRouter()
@@ -48,12 +64,12 @@ export default function PoliciesPage() {
   const [policies, setPolicies] = useState<Policy[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
-  // Filters
+
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
   const [selectedAppliesTo, setSelectedAppliesTo] = useState<string | null>(null)
   const [selectedStack, setSelectedStack] = useState<string | null>(null)
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
@@ -63,20 +79,28 @@ export default function PoliciesPage() {
     }
     fetchPolicies()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategory, selectedStatus, selectedAppliesTo, selectedStack, searchQuery])
+  }, [
+    selectedCategory,
+    selectedStatus,
+    selectedAppliesTo,
+    selectedStack,
+    selectedTag,
+    searchQuery,
+  ])
 
   const fetchPolicies = async () => {
     try {
       setLoading(true)
       setError(null)
-      
+
       const params = new URLSearchParams()
       if (selectedCategory) params.append('category', selectedCategory)
       if (selectedStatus) params.append('status', selectedStatus)
       if (selectedAppliesTo) params.append('applies_to', selectedAppliesTo)
       if (selectedStack) params.append('stack', selectedStack)
+      if (selectedTag) params.append('tag', selectedTag)
       if (searchQuery) params.append('search', searchQuery)
-      
+
       const response = await apiClient.get(`/api/v1/policies?${params.toString()}`)
       setPolicies(response.data || [])
     } catch (err: any) {
@@ -87,6 +111,16 @@ export default function PoliciesPage() {
       setLoading(false)
     }
   }
+
+  const tagOptions = useMemo(() => {
+    const fromData = new Set<string>(COMMON_TAGS)
+    for (const p of policies) {
+      for (const t of p.tags || []) {
+        if (t) fromData.add(t)
+      }
+    }
+    return Array.from(fromData).sort((a, b) => a.localeCompare(b))
+  }, [policies])
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
@@ -102,7 +136,7 @@ export default function PoliciesPage() {
   }
 
   const getCategoryDisplayName = (category: string) => {
-    const cat = CATEGORIES.find(c => c.id === category)
+    const cat = CATEGORIES.find((c) => c.id === category)
     return cat?.name || category
   }
 
@@ -126,11 +160,32 @@ export default function PoliciesPage() {
     }
   }
 
+  const handleImportSops = async () => {
+    try {
+      setLoading(true)
+      const response = await apiClient.post('/api/v1/policies/import-sops')
+      alert(
+        response.data?.message ||
+          `Imported ${response.data?.count || 0} SOPs into the policy catalog`
+      )
+      fetchPolicies()
+    } catch (err: any) {
+      console.error('Error importing SOPs:', err)
+      alert(err.response?.data?.detail || 'Failed to import SOPs')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleDelete = async (policyId: string, policyName: string) => {
-    if (!confirm(`Are you sure you want to delete "${policyName}"? This action cannot be undone.`)) {
+    if (
+      !confirm(
+        `Are you sure you want to delete "${policyName}"? This action cannot be undone.`
+      )
+    ) {
       return
     }
-    
+
     try {
       await apiClient.delete(`/api/v1/policies/${policyId}`)
       fetchPolicies()
@@ -143,14 +198,19 @@ export default function PoliciesPage() {
   return (
     <div className="policies-page">
       <div className="policies-header">
-        <h1 className="policies-title">Policy Catalog</h1>
+        <div>
+          <h1 className="policies-title">Policy Catalog</h1>
+          <p className="policies-header-sub">
+            Org standards and operating procedures used for Build validation and
+            governance. Import file SOPs here to manage everything in one place.
+          </p>
+        </div>
         <div className="header-actions">
-          <button
-            className="btn-secondary"
-            onClick={handleLoadDefaults}
-            disabled={loading}
-          >
+          <button className="btn-secondary" onClick={handleLoadDefaults} disabled={loading}>
             Load Defaults
+          </button>
+          <button className="btn-secondary" onClick={handleImportSops} disabled={loading}>
+            Import SOPs
           </button>
           <button
             className="btn-primary"
@@ -163,7 +223,6 @@ export default function PoliciesPage() {
       </div>
 
       <div className="policies-content">
-        {/* Filters Sidebar */}
         <div className="policies-filters">
           <div className="filter-section">
             <h3 className="filter-title">Category</h3>
@@ -174,7 +233,7 @@ export default function PoliciesPage() {
               >
                 All
               </button>
-              {CATEGORIES.map(cat => (
+              {CATEGORIES.filter((c) => c.id !== 'infrastructure').map((cat) => (
                 <button
                   key={cat.id}
                   className={`filter-option ${selectedCategory === cat.id ? 'active' : ''}`}
@@ -195,7 +254,7 @@ export default function PoliciesPage() {
               >
                 All
               </button>
-              {STATUSES.map(status => (
+              {STATUSES.map((status) => (
                 <button
                   key={status.id}
                   className={`filter-option ${selectedStatus === status.id ? 'active' : ''}`}
@@ -216,7 +275,7 @@ export default function PoliciesPage() {
               >
                 All
               </button>
-              {['story', 'architecture', 'backend', 'frontend', 'pipeline', 'infra'].map(applies => (
+              {APPLIES_TO.map((applies) => (
                 <button
                   key={applies}
                   className={`filter-option ${selectedAppliesTo === applies ? 'active' : ''}`}
@@ -237,7 +296,7 @@ export default function PoliciesPage() {
               >
                 All
               </button>
-              {['Java/Spring', 'Next/React', 'Nuxt/Vue'].map(stack => (
+              {STACKS.map((stack) => (
                 <button
                   key={stack}
                   className={`filter-option ${selectedStack === stack ? 'active' : ''}`}
@@ -248,11 +307,30 @@ export default function PoliciesPage() {
               ))}
             </div>
           </div>
+
+          <div className="filter-section">
+            <h3 className="filter-title">Tags</h3>
+            <div className="filter-options">
+              <button
+                className={`filter-option ${selectedTag === null ? 'active' : ''}`}
+                onClick={() => setSelectedTag(null)}
+              >
+                All
+              </button>
+              {tagOptions.map((tag) => (
+                <button
+                  key={tag}
+                  className={`filter-option ${selectedTag === tag ? 'active' : ''}`}
+                  onClick={() => setSelectedTag(tag)}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Main Content */}
         <div className="policies-main">
-          {/* Search Bar */}
           <div className="policies-search">
             <div className="search-input-wrapper">
               <Search className="search-icon h-5 w-5" />
@@ -266,7 +344,6 @@ export default function PoliciesPage() {
             </div>
           </div>
 
-          {/* Policies List */}
           {loading ? (
             <div className="loading-state">Loading policies...</div>
           ) : error ? (
@@ -274,12 +351,17 @@ export default function PoliciesPage() {
           ) : policies.length === 0 ? (
             <div className="empty-state">
               <p>No policies found</p>
-              <button
-                className="btn-primary"
-                onClick={() => router.push('/dashboard/admin/policies/new')}
-              >
-                Create Your First Policy
-              </button>
+              <div className="empty-actions">
+                <button className="btn-secondary" onClick={handleImportSops}>
+                  Import SOPs
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => router.push('/dashboard/admin/policies/new')}
+                >
+                  Create Your First Policy
+                </button>
+              </div>
             </div>
           ) : (
             <div className="policies-list">
@@ -292,12 +374,13 @@ export default function PoliciesPage() {
                     <th>Status</th>
                     <th>Version</th>
                     <th>Applies To</th>
+                    <th>Tags</th>
                     <th>Last Updated</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {policies.map(policy => (
+                  {policies.map((policy) => (
                     <tr key={policy.id} className="policy-row">
                       <td>
                         <span className="policy-id">{policy.policy_id}</span>
@@ -309,7 +392,9 @@ export default function PoliciesPage() {
                         )}
                       </td>
                       <td>
-                        <span className="category-badge">{getCategoryDisplayName(policy.category)}</span>
+                        <span className="category-badge">
+                          {getCategoryDisplayName(policy.category)}
+                        </span>
                       </td>
                       <td>
                         <span className={getStatusBadgeClass(policy.status)}>
@@ -318,7 +403,9 @@ export default function PoliciesPage() {
                       </td>
                       <td>
                         {policy.active_version_number ? (
-                          <span className="version-badge">{policy.active_version_number}</span>
+                          <span className="version-badge">
+                            {policy.active_version_number}
+                          </span>
                         ) : (
                           <span className="version-badge no-version">No version</span>
                         )}
@@ -326,14 +413,34 @@ export default function PoliciesPage() {
                       <td>
                         <div className="applies-to-chips">
                           {policy.applies_to && policy.applies_to.length > 0 ? (
-                            policy.applies_to.slice(0, 2).map(applies => (
-                              <span key={applies} className="chip">{applies}</span>
+                            policy.applies_to.slice(0, 2).map((applies) => (
+                              <span key={applies} className="chip">
+                                {applies}
+                              </span>
                             ))
                           ) : (
                             <span className="chip-empty">—</span>
                           )}
                           {policy.applies_to && policy.applies_to.length > 2 && (
-                            <span className="chip-more">+{policy.applies_to.length - 2}</span>
+                            <span className="chip-more">
+                              +{policy.applies_to.length - 2}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="applies-to-chips">
+                          {policy.tags && policy.tags.length > 0 ? (
+                            policy.tags.slice(0, 2).map((tag) => (
+                              <span key={tag} className="chip chip-tag">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="chip-empty">—</span>
+                          )}
+                          {policy.tags && policy.tags.length > 2 && (
+                            <span className="chip-more">+{policy.tags.length - 2}</span>
                           )}
                         </div>
                       </td>
@@ -346,17 +453,12 @@ export default function PoliciesPage() {
                         <div className="policy-actions">
                           <button
                             className="action-btn view"
-                            onClick={() => router.push(`/dashboard/admin/policies/${policy.id}`)}
+                            onClick={() =>
+                              router.push(`/dashboard/admin/policies/${policy.id}`)
+                            }
                             title="View"
                           >
                             View
-                          </button>
-                          <button
-                            className="action-btn edit"
-                            onClick={() => router.push(`/dashboard/admin/policies/${policy.id}/edit`)}
-                            title="Edit"
-                          >
-                            Edit
                           </button>
                           <button
                             className="action-btn delete"

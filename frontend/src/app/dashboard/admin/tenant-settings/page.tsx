@@ -56,6 +56,20 @@ export default function TenantSettingsPage() {
     auto_assess_on_repo_index: false,
     auto_assess_on_application_analysis: false,
   })
+  const [llmSettings, setLlmSettings] = useState({
+    wiki_generation_mode: '' as string,
+    llm_provider: '' as string,
+    llm_model: '' as string,
+    wiki_github_export_enabled: false,
+    wiki_github_export_path: 'docs/savi-wiki',
+  })
+  const [llmStatus, setLlmStatus] = useState<{
+    wiki_generation_mode_default?: string
+    llm_provider_default?: string
+    bedrock_model_id?: string
+    bedrock_region?: string
+    credentials?: Record<string, boolean>
+  } | null>(null)
   const [onboardingPath, setOnboardingPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -87,6 +101,17 @@ export default function TenantSettingsPage() {
         auto_assess_on_application_analysis: false,
         ...res.data.assessment_settings,
       })
+      setLlmSettings({
+        wiki_generation_mode: res.data.llm_settings?.wiki_generation_mode || '',
+        llm_provider: res.data.llm_settings?.llm_provider || '',
+        llm_model: res.data.llm_settings?.llm_model || '',
+        wiki_github_export_enabled: Boolean(
+          res.data.llm_settings?.wiki_github_export_enabled
+        ),
+        wiki_github_export_path:
+          res.data.llm_settings?.wiki_github_export_path || 'docs/savi-wiki',
+      })
+      setLlmStatus(res.data.llm_status || null)
       setOnboardingPath(res.data.onboarding_path)
     } catch {
       setError('Failed to load tenant configuration')
@@ -118,6 +143,26 @@ export default function TenantSettingsPage() {
     try {
       await apiClient.patch('/api/v1/tenant-config/assessment-settings', assessmentSettings)
       setMessage('Assessment settings saved.')
+    } catch (err: unknown) {
+      setError(extractError(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveLlmSettings = async () => {
+    setSaving(true)
+    setError(null)
+    setMessage(null)
+    try {
+      await apiClient.patch('/api/v1/tenant-config/llm-settings', {
+        wiki_generation_mode: llmSettings.wiki_generation_mode || null,
+        llm_provider: llmSettings.llm_provider || null,
+        llm_model: llmSettings.llm_model || null,
+        wiki_github_export_enabled: llmSettings.wiki_github_export_enabled,
+      })
+      await loadConfig()
+      setMessage('Wiki / LLM settings saved (API keys stay in server .env).')
     } catch (err: unknown) {
       setError(extractError(err))
     } finally {
@@ -217,6 +262,115 @@ export default function TenantSettingsPage() {
               </div>
             )
           })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Wiki generation & LLM</CardTitle>
+          <CardDescription>
+            Choose how wiki/analysis is generated. Secrets (Anthropic, OpenAI, AWS) stay in the
+            server environment — never stored in the database.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Generation mode</label>
+              <select
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={llmSettings.wiki_generation_mode}
+                onChange={(e) =>
+                  setLlmSettings((s) => ({ ...s, wiki_generation_mode: e.target.value }))
+                }
+                disabled={loading}
+              >
+                <option value="">
+                  Inherit server ({llmStatus?.wiki_generation_mode_default || 'auto'})
+                </option>
+                <option value="auto">Auto (CLI then API)</option>
+                <option value="api">API only (Claude / OpenAI / Bedrock)</option>
+                <option value="cli">CLI only (wiki_agent.sh)</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">LLM provider</label>
+              <select
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={llmSettings.llm_provider}
+                onChange={(e) => setLlmSettings((s) => ({ ...s, llm_provider: e.target.value }))}
+                disabled={loading}
+              >
+                <option value="">
+                  Inherit server ({llmStatus?.llm_provider_default || 'claude'})
+                </option>
+                <option value="claude">Anthropic Claude</option>
+                <option value="openai">OpenAI</option>
+                <option value="bedrock">AWS Bedrock</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Model ID (required for Bedrock; optional override otherwise)
+            </label>
+            <input
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              placeholder={
+                llmStatus?.bedrock_model_id ||
+                'e.g. us.anthropic.claude-sonnet-4-5 or anthropic.claude-…'
+              }
+              value={llmSettings.llm_model}
+              onChange={(e) => setLlmSettings((s) => ({ ...s, llm_model: e.target.value }))}
+              disabled={loading}
+            />
+          </div>
+          {llmStatus && (
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">Region {llmStatus.bedrock_region || '—'}</Badge>
+              <Badge variant={llmStatus.credentials?.anthropic ? 'secondary' : 'outline'}>
+                Anthropic {llmStatus.credentials?.anthropic ? 'configured' : 'missing'}
+              </Badge>
+              <Badge variant={llmStatus.credentials?.openai ? 'secondary' : 'outline'}>
+                OpenAI {llmStatus.credentials?.openai ? 'configured' : 'missing'}
+              </Badge>
+              <Badge
+                variant={llmStatus.credentials?.bedrock_model_configured ? 'secondary' : 'outline'}
+              >
+                Bedrock model{' '}
+                {llmStatus.credentials?.bedrock_model_configured ? 'set' : 'unset'}
+              </Badge>
+            </div>
+          )}
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={llmSettings.wiki_github_export_enabled}
+              onChange={(e) =>
+                setLlmSettings((s) => ({
+                  ...s,
+                  wiki_github_export_enabled: e.target.checked,
+                }))
+              }
+              disabled={loading}
+            />
+            <span>
+              <span className="block text-sm font-medium">Push wiki to GitHub as a PR</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                After wiki generation, open a PR under{' '}
+                <code className="text-xs">{llmSettings.wiki_github_export_path}/</code>.
+                Merging that PR does not re-run wiki analysis (wiki-folder-only changes are
+                always skipped). Requires the repo&apos;s linked GitHub credential with
+                contents + pull-request write access.
+              </span>
+            </span>
+          </label>
+          <Button onClick={saveLlmSettings} disabled={saving || loading}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save wiki / LLM settings
+          </Button>
         </CardContent>
       </Card>
 

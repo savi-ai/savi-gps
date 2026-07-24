@@ -19,7 +19,6 @@ import {
   ClipboardList,
   BarChart3,
   Shield,
-  FileText,
   Settings,
   ClipboardCheck,
   Settings2,
@@ -146,12 +145,6 @@ const NAV_GROUPS: NavGroup[] = [
         path: '/dashboard/admin/policies',
         permission: 'can_manage_policies',
         roles: ['admin'],
-      },
-      {
-        id: 'admin-sops',
-        label: 'SOPs',
-        icon: FileText,
-        path: '/dashboard/admin/sops',
       },
       {
         id: 'admin-wiki-review',

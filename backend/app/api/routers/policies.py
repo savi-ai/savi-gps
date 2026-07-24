@@ -338,6 +338,130 @@ async def load_default_policies(
     return {"message": f"Loaded {loaded_count} default policies", "count": loaded_count}
 
 
+@router.post("/import-sops", status_code=status.HTTP_200_OK)
+async def import_sops_as_policies(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Import file-based SOPs (backend/sops/*.yaml) into the tenant Policy catalog.
+
+    Keeps Build/validation SOPs available under Admin → Policies so the separate
+    SOPs UI is unnecessary. Skips SOPs that already exist for this tenant.
+    """
+    if not has_permission(user, "can_manage_policies", db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    from app.services.sop_service import sop_service
+
+    try:
+        sop_service.reload_sops()
+    except Exception as e:
+        logger.warning("SOP reload before import failed: %s", e)
+
+    imported = 0
+    skipped = 0
+    for sop in sop_service.get_all_sops():
+        policy_key = (sop.id or "").upper().replace("_", "-")
+        if not policy_key:
+            continue
+
+        existing = (
+            db.query(Policy)
+            .filter(
+                and_(
+                    Policy.policy_id == policy_key,
+                    Policy.tenant_id == user.tenant_id,
+                )
+            )
+            .first()
+        )
+        if existing:
+            skipped += 1
+            continue
+
+        tags = list(sop.tags or [])
+        if "sop" not in [t.lower() for t in tags]:
+            tags = ["sop", *tags]
+
+        content_dict = {
+            "source": "sop_yaml",
+            "sop_id": sop.id,
+            "title": sop.title or sop.name,
+            "version": sop.version,
+            "category": sop.category,
+            "description": sop.description,
+            "rules": [r.model_dump() if hasattr(r, "model_dump") else r.dict() for r in (sop.rules or [])],
+            "checks": [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in (sop.checks or [])],
+            "remediation_hints": sop.remediation_hints or {},
+            "applies_to": list(sop.applies_to or []),
+            "enforcement": sop.enforcement,
+            "validation": list(sop.validation or []),
+        }
+
+        policy = Policy(
+            id=str(uuid.uuid4()),
+            tenant_id=user.tenant_id,
+            policy_id=policy_key,
+            name=sop.title or sop.name,
+            description=sop.description,
+            category=(sop.category or "coding").lower().replace("-", "_"),
+            status=sop.status if sop.status in ("draft", "active", "deprecated") else "active",
+            applies_to=list(sop.applies_to or []),
+            tags=tags,
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        db.add(policy)
+        db.flush()
+
+        version_number = sop.version or "1.0.0"
+        try:
+            storage_key = storage_service.save_policy_content(
+                tenant_id=user.tenant_id or "default",
+                policy_id=policy_key,
+                category=policy.category,
+                content=content_dict,
+                version=version_number,
+                content_yaml=None,
+            )
+        except Exception as e:
+            logger.warning("Storage save for imported SOP %s failed: %s", sop.id, e)
+            storage_key = None
+
+        version = PolicyVersion(
+            id=str(uuid.uuid4()),
+            policy_id=policy.id,
+            version_number=version_number,
+            content=content_dict,
+            content_yaml=None,
+            storage_key=storage_key,
+            is_draft=False,
+            requires_approval=False,
+            created_by=user.id,
+        )
+        db.add(version)
+        policy.active_version_id = version.id
+
+        db.add(
+            PolicyAuditLog(
+                id=str(uuid.uuid4()),
+                tenant_id=user.tenant_id,
+                policy_id=policy.id,
+                action_type="created",
+                user_id=user.id,
+                new_version=version.version_number,
+            )
+        )
+        imported += 1
+
+    db.commit()
+    return {
+        "message": f"Imported {imported} SOPs as policies ({skipped} already present)",
+        "count": imported,
+        "skipped": skipped,
+    }
+
+
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_policy(
     policy_data: PolicyCreate,
