@@ -63,6 +63,11 @@ export default function TenantSettingsPage() {
     wiki_github_export_enabled: false,
     wiki_github_export_path: 'docs/savi-wiki',
   })
+  const [specLayerSettings, setSpecLayerSettings] = useState({
+    enabled: false,
+    specs_folder: '.github',
+    coding_agent: 'github_copilot',
+  })
   const [llmStatus, setLlmStatus] = useState<{
     wiki_generation_mode_default?: string
     llm_provider_default?: string
@@ -110,6 +115,12 @@ export default function TenantSettingsPage() {
         ),
         wiki_github_export_path:
           res.data.llm_settings?.wiki_github_export_path || 'docs/savi-wiki',
+      })
+      setSpecLayerSettings({
+        enabled: Boolean(res.data.spec_layer_settings?.enabled),
+        specs_folder: res.data.spec_layer_settings?.specs_folder || '.github',
+        coding_agent:
+          res.data.spec_layer_settings?.coding_agent || 'github_copilot',
       })
       setLlmStatus(res.data.llm_status || null)
       setOnboardingPath(res.data.onboarding_path)
@@ -168,6 +179,46 @@ export default function TenantSettingsPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveSpecLayerSettings = async () => {
+    setSaving(true)
+    setError(null)
+    setMessage(null)
+    try {
+      await apiClient.patch('/api/v1/tenant-config/spec-layer-settings', {
+        enabled: specLayerSettings.enabled,
+        specs_folder: specLayerSettings.specs_folder.trim() || '.github',
+        coding_agent: specLayerSettings.coding_agent,
+      })
+      await refreshTenantConfig()
+      await loadConfig()
+      setMessage(
+        'Specs & Drift settings saved. Re-index repositories to refresh discovered specs.'
+      )
+    } catch (err: unknown) {
+      setError(extractError(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const onCodingAgentChange = (agent: string) => {
+    const suggested: Record<string, string> = {
+      kiro: '.kiro',
+      github_copilot: '.github',
+      cursor: '.cursor',
+      claude_code: '.claude',
+    }
+    setSpecLayerSettings((s) => ({
+      ...s,
+      coding_agent: agent,
+      // Only auto-fill folder when it still matches a known default
+      specs_folder:
+        Object.values(suggested).includes(s.specs_folder) || !s.specs_folder
+          ? suggested[agent] || s.specs_folder
+          : s.specs_folder,
+    }))
   }
 
   const saveCustom = async () => {
@@ -370,6 +421,77 @@ export default function TenantSettingsPage() {
           <Button onClick={saveLlmSettings} disabled={saving || loading}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Save wiki / LLM settings
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Specs &amp; Drift</CardTitle>
+          <CardDescription>
+            Discover coding-agent specs during repository indexing and surface them on Specs
+            &amp; Drift. Off by default — enable and choose the folder your team uses.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={specLayerSettings.enabled}
+              onChange={(e) =>
+                setSpecLayerSettings((s) => ({ ...s, enabled: e.target.checked }))
+              }
+              disabled={loading}
+            />
+            <span>
+              <span className="block text-sm font-medium">Enable specs scanning</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                When on, each index pass scans the folder below for markdown / YAML specs.
+                When off, Specs &amp; Drift stays empty after the next re-index.
+              </span>
+            </span>
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Coding agent</label>
+              <select
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={specLayerSettings.coding_agent}
+                onChange={(e) => onCodingAgentChange(e.target.value)}
+                disabled={loading || !specLayerSettings.enabled}
+              >
+                <option value="github_copilot">GitHub Copilot</option>
+                <option value="kiro">Kiro</option>
+                <option value="cursor">Cursor</option>
+                <option value="claude_code">Claude Code</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Specs folder (repo-relative)
+              </label>
+              <input
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm font-mono"
+                placeholder=".github"
+                value={specLayerSettings.specs_folder}
+                onChange={(e) =>
+                  setSpecLayerSettings((s) => ({ ...s, specs_folder: e.target.value }))
+                }
+                disabled={loading || !specLayerSettings.enabled}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Default <code className="text-xs">.github</code>. Changing the coding agent
+                suggests a matching folder (e.g. Kiro → <code className="text-xs">.kiro</code>).
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={saveSpecLayerSettings}
+            disabled={saving || loading}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save Specs &amp; Drift settings
           </Button>
         </CardContent>
       </Card>

@@ -48,6 +48,15 @@ DEFAULT_LLM_SETTINGS = {
     "wiki_github_export_enabled": False,
 }
 
+SPEC_LAYER_SETTINGS_KEY = "_spec_layer_settings"
+CODING_AGENTS = ("kiro", "github_copilot", "cursor", "claude_code")
+DEFAULT_SPEC_LAYER_SETTINGS = {
+    # Opt-in: when false, Specs & Drift skips scanning on index
+    "enabled": False,
+    "specs_folder": ".github",
+    "coding_agent": "github_copilot",  # kiro | github_copilot | cursor | claude_code
+}
+
 
 def capabilities_for_onboarding(path: str) -> Dict[str, bool]:
     """Map onboarding path selection to tenant capabilities."""
@@ -158,6 +167,60 @@ class TenantConfigService:
         )
         return out
 
+    def get_spec_layer_settings(self, tenant_id: str) -> Dict[str, Any]:
+        from app.services.intelligence.spec_drift_service import normalize_specs_folder
+
+        config = self.get_or_create(tenant_id)
+        raw = (config.capabilities or {}).get(SPEC_LAYER_SETTINGS_KEY) or {}
+        agent = raw.get("coding_agent") or DEFAULT_SPEC_LAYER_SETTINGS["coding_agent"]
+        if agent not in CODING_AGENTS:
+            agent = DEFAULT_SPEC_LAYER_SETTINGS["coding_agent"]
+        return {
+            "enabled": bool(
+                raw.get("enabled", DEFAULT_SPEC_LAYER_SETTINGS["enabled"])
+            ),
+            "specs_folder": normalize_specs_folder(
+                raw.get("specs_folder"),
+                default=DEFAULT_SPEC_LAYER_SETTINGS["specs_folder"],
+            ),
+            "coding_agent": agent,
+        }
+
+    def update_spec_layer_settings(
+        self, tenant_id: str, settings_update: Dict[str, Any]
+    ) -> TenantConfig:
+        from app.services.intelligence.spec_drift_service import normalize_specs_folder
+
+        config = self.get_or_create(tenant_id)
+        caps = dict(config.capabilities or {})
+        current = {
+            **DEFAULT_SPEC_LAYER_SETTINGS,
+            **(caps.get(SPEC_LAYER_SETTINGS_KEY) or {}),
+        }
+        if "enabled" in settings_update and settings_update["enabled"] is not None:
+            current["enabled"] = bool(settings_update["enabled"])
+        if "specs_folder" in settings_update and settings_update["specs_folder"] is not None:
+            current["specs_folder"] = normalize_specs_folder(
+                str(settings_update["specs_folder"]),
+                default=DEFAULT_SPEC_LAYER_SETTINGS["specs_folder"],
+            )
+        if "coding_agent" in settings_update and settings_update["coding_agent"] is not None:
+            agent = str(settings_update["coding_agent"]).strip()
+            if agent not in CODING_AGENTS:
+                raise ValueError(
+                    "coding_agent must be one of: " + ", ".join(CODING_AGENTS)
+                )
+            current["coding_agent"] = agent
+        caps[SPEC_LAYER_SETTINGS_KEY] = current
+        self._preserve_bags(caps, config.capabilities or {})
+        for key in ALL_CAPABILITY_KEYS:
+            if key not in caps:
+                caps[key] = default_capabilities().get(key, False)
+        config.capabilities = caps
+        self.db.commit()
+        self.db.refresh(config)
+        return config
+
     def update_llm_settings(
         self, tenant_id: str, settings_update: Dict[str, Any]
     ) -> TenantConfig:
@@ -202,7 +265,7 @@ class TenantConfigService:
 
     @staticmethod
     def _preserve_bags(target: Dict[str, Any], existing: Dict[str, Any]) -> None:
-        for bag in (ASSESSMENT_SETTINGS_KEY, LLM_SETTINGS_KEY):
+        for bag in (ASSESSMENT_SETTINGS_KEY, LLM_SETTINGS_KEY, SPEC_LAYER_SETTINGS_KEY):
             if bag not in target and bag in existing:
                 target[bag] = existing[bag]
 
@@ -267,6 +330,7 @@ class TenantConfigService:
                 ),
                 "wiki_github_export_path": settings.WIKI_GITHUB_EXPORT_PATH,
             },
+            "spec_layer_settings": self.get_spec_layer_settings(config.tenant_id),
             "llm_status": env_llm_status(),
             "onboarding_path": config.onboarding_path,
             "updated_at": config.updated_at.isoformat() if config.updated_at else None,

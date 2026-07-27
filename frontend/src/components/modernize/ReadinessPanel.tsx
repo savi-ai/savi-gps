@@ -17,6 +17,12 @@ export interface ReadinessSignal {
   score: number
   status: 'good' | 'warn' | 'bad' | string
   detail: string
+  failed_policies?: Array<{
+    policy_name: string
+    rule_id: string
+    message: string
+    policy_version_id?: string
+  }>
 }
 
 export interface ReadinessData {
@@ -29,6 +35,17 @@ export interface ReadinessData {
   overall_score?: number
   readiness_level?: 'low' | 'medium' | 'high' | string
   signals?: ReadinessSignal[]
+  policy_gaps?: Array<{
+    signal_id: string
+    policy_name: string
+    rule_id: string
+    message: string
+  }>
+  policies_applied?: Array<{
+    policy_name: string
+    version_number: string
+    policy_id?: string
+  }>
   existing_plans?: Array<{
     id: string
     title: string
@@ -70,6 +87,8 @@ function SignalRow({ signal }: { signal: ReadinessSignal }) {
         ? 'text-destructive'
         : 'text-amber-600'
 
+  const failures = signal.failed_policies || []
+
   return (
     <div className="flex items-start justify-between gap-3 py-2">
       <div className="flex items-start gap-2">
@@ -77,6 +96,16 @@ function SignalRow({ signal }: { signal: ReadinessSignal }) {
         <div>
           <p className="text-sm font-medium">{signal.label}</p>
           <p className="text-xs text-muted-foreground">{signal.detail}</p>
+          {failures.length > 0 && (
+            <ul className="mt-1 space-y-0.5">
+              {failures.map((f, i) => (
+                <li key={`${f.rule_id}-${i}`} className="text-xs text-destructive">
+                  Failed policy: {f.message}
+                  {f.policy_name ? ` (${f.policy_name})` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
       <div className="text-right shrink-0">
@@ -169,7 +198,8 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
           <div>
             <CardTitle className="text-base">Modernization readiness</CardTitle>
             <CardDescription>
-              Manual assessment from wiki analysis, index metadata, and code structure
+              Manual assessment from wiki analysis, index metadata, and tenant
+              modernization policies
             </CardDescription>
           </div>
           <Button variant="ghost" size="icon" onClick={load} disabled={loading} aria-label="Reload stored">
@@ -238,6 +268,30 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                     <SignalRow key={s.id} signal={s} />
                   ))}
                 </div>
+
+                {(readiness.policies_applied || []).length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Policies applied:{' '}
+                    {(readiness.policies_applied || [])
+                      .map((p) => `${p.policy_name} v${p.version_number}`)
+                      .join(', ')}
+                  </p>
+                )}
+
+                {(readiness.policy_gaps || []).length > 0 && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                    <p className="mb-1 text-xs font-medium uppercase text-destructive">
+                      Policy gaps ({readiness.policy_gaps!.length})
+                    </p>
+                    <ul className="space-y-1">
+                      {readiness.policy_gaps!.map((g, i) => (
+                        <li key={`${g.rule_id}-${i}`} className="text-xs text-destructive">
+                          Failed policy: {g.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {(readiness.existing_plans || []).length > 0 && (
                   <div>

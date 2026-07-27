@@ -36,6 +36,7 @@ const CATEGORIES = [
   { id: 'infra', name: 'Infrastructure' },
   { id: 'infrastructure', name: 'Infrastructure (alt)' },
   { id: 'ci_cd', name: 'CI/CD' },
+  { id: 'modernize', name: 'Modernize' },
   { id: 'building_blocks', name: 'Building Blocks' },
 ]
 
@@ -177,6 +178,20 @@ export default function PoliciesPage() {
     }
   }
 
+  const handleSeedModernize = async () => {
+    try {
+      setLoading(true)
+      const response = await apiClient.post('/api/v1/policies/seed-modernize-readiness')
+      alert(response.data?.message || 'Modernize readiness policy seeded')
+      fetchPolicies()
+    } catch (err: any) {
+      console.error('Error seeding modernize policy:', err)
+      alert(err.response?.data?.detail || 'Failed to seed modernize policy')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleDelete = async (policyId: string, policyName: string) => {
     if (
       !confirm(
@@ -211,6 +226,9 @@ export default function PoliciesPage() {
           </button>
           <button className="btn-secondary" onClick={handleImportSops} disabled={loading}>
             Import SOPs
+          </button>
+          <button className="btn-secondary" onClick={handleSeedModernize} disabled={loading}>
+            Seed Modernize Policy
           </button>
           <button
             className="btn-primary"
@@ -376,7 +394,7 @@ export default function PoliciesPage() {
                     <th>Applies To</th>
                     <th>Tags</th>
                     <th>Last Updated</th>
-                    <th>Actions</th>
+                    <th className="col-actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -449,7 +467,7 @@ export default function PoliciesPage() {
                           {new Date(policy.updated_at).toLocaleDateString()}
                         </div>
                       </td>
-                      <td>
+                      <td className="col-actions">
                         <div className="policy-actions">
                           <button
                             className="action-btn view"
@@ -459,6 +477,15 @@ export default function PoliciesPage() {
                             title="View"
                           >
                             View
+                          </button>
+                          <button
+                            className="action-btn edit"
+                            onClick={() =>
+                              router.push(`/dashboard/admin/policies/${policy.id}/edit`)
+                            }
+                            title="Edit"
+                          >
+                            Edit
                           </button>
                           <button
                             className="action-btn delete"

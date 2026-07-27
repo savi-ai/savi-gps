@@ -14,7 +14,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       <Sidebar />
       <div className="lg:pl-64">
         <TopNavbar />
-        <main className="p-6">
+        <main className="min-w-0 overflow-x-auto p-4 sm:p-6">
           {children}
         </main>
       </div>

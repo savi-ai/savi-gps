@@ -122,6 +122,14 @@ export default function PolicyDetailPage() {
             {policy.active_version_number ? ` · v${policy.active_version_number}` : ''}
           </p>
         </div>
+        <div className="header-actions">
+          <button
+            className="btn-primary"
+            onClick={() => router.push(`/dashboard/admin/policies/${policy.id}/edit`)}
+          >
+            Edit
+          </button>
+        </div>
       </div>
 
       <div className="policy-detail-card">

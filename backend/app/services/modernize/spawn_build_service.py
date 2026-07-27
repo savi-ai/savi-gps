@@ -65,6 +65,21 @@ def _build_brief(plan: ModernizationPlan, repo: Repository, wiki_json: Optional[
         "## Repository intelligence (from wiki)",
         _wiki_excerpt(wiki_json) or "_No wiki artifacts available — link repo and re-index._",
     ]
+    gaps = assessment.get("policy_gaps") or []
+    if gaps:
+        lines.extend(["", "## Policy gaps"])
+        for g in gaps[:20]:
+            name = g.get("policy_name") or "Policy"
+            msg = g.get("message") or g.get("rule_id") or "violation"
+            signal = g.get("signal_id") or ""
+            lines.append(f"- **{name}** ({signal}): {msg}")
+    applied = assessment.get("policies_applied") or []
+    if applied:
+        lines.extend(["", "## Policies applied"])
+        for p in applied[:10]:
+            lines.append(
+                f"- {p.get('policy_name')} v{p.get('version_number')} (`{p.get('version_id', '')[:8]}`)"
+            )
     return "\n".join(lines)
 
 

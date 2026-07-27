@@ -165,7 +165,14 @@ def _drift_score(pages: List[WikiPage]) -> tuple[int, str]:
 
 
 def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
-    """Build readiness panel JSON for a repository."""
+    """Build readiness panel JSON for a repository (heuristics + modernize policies)."""
+    from datetime import datetime as dt
+
+    from app.services.modernize.policy_readiness import (
+        apply_modernize_policies,
+        load_modernize_policies,
+    )
+
     attrs = (
         db.query(RepositoryAnalysisAttribute)
         .filter(RepositoryAnalysisAttribute.repository_id == repository.id)
@@ -218,13 +225,30 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
             )
         )
 
-    overall = round(sum(s["score"] for s in signals) / len(signals)) if signals else 0
-    if overall >= 75:
-        level = "high"
-    elif overall >= 50:
-        level = "medium"
-    else:
-        level = "low"
+    index_age_days = None
+    if repository.last_indexed_at:
+        index_age_days = (dt.now() - repository.last_indexed_at).total_seconds() / 86400
+
+    verified = sum(p.verified_claim_count or 0 for p in pages)
+    total_claims = sum(p.total_claim_count or 0 for p in pages)
+    citation_pct = round((verified / total_claims) * 100) if total_claims else 0
+
+    policies = load_modernize_policies(db, repository.tenant_id)
+    policy_result = apply_modernize_policies(
+        signals=signals,
+        policies=policies,
+        context={
+            "runtime": runtime,
+            "page_slugs": {p.slug for p in pages if p.slug},
+            "citation_pct": citation_pct,
+            "test_file_count": test_count,
+            "frameworks": frameworks,
+            "index_age_days": index_age_days,
+        },
+    )
+    signals = policy_result["signals"]
+    overall = policy_result["overall_score"]
+    level = policy_result["readiness_level"]
 
     existing_plans = (
         db.query(ModernizationPlan)
@@ -261,4 +285,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
         ],
         "indexed": repository.status == "ready",
         "test_file_count": test_count,
+        "policy_version_ids": policy_result.get("policy_version_ids") or [],
+        "policies_applied": policy_result.get("policies_applied") or [],
+        "policy_gaps": policy_result.get("policy_gaps") or [],
     }

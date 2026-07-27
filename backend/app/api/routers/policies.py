@@ -176,6 +176,17 @@ async def list_policies(
     
     result = []
     for policy in policies:
+        version_number = None
+        if policy.active_version:
+            version_number = policy.active_version.version_number
+        elif policy.active_version_id:
+            ver = (
+                db.query(PolicyVersion)
+                .filter(PolicyVersion.id == policy.active_version_id)
+                .first()
+            )
+            if ver:
+                version_number = ver.version_number
         policy_dict = {
             "id": policy.id,
             "policy_id": policy.policy_id,
@@ -187,14 +198,12 @@ async def list_policies(
             "stacks": policy.stacks,
             "tags": policy.tags,
             "active_version_id": policy.active_version_id,
-            "active_version_number": None,
+            "active_version_number": version_number,
             "created_by": policy.created_by,
             "updated_by": policy.updated_by,
             "created_at": policy.created_at,
             "updated_at": policy.updated_at
         }
-        if policy.active_version:
-            policy_dict["active_version_number"] = policy.active_version.version_number
         result.append(PolicyResponse(**policy_dict))
     
     return result
@@ -462,6 +471,106 @@ async def import_sops_as_policies(
     }
 
 
+@router.post("/seed-modernize-readiness", status_code=status.HTTP_200_OK)
+async def seed_modernize_readiness_policy(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create the default Modernize readiness policy (machine-readable rules) if missing."""
+    if not has_permission(user, "can_manage_policies", db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    from app.services.modernize.policy_readiness import (
+        DEFAULT_MODERNIZE_POLICY_CONTENT,
+        MODERNIZE_CATEGORY,
+        MODERNIZE_TAG,
+    )
+
+    policy_key = "MOD-READY-001"
+    existing = (
+        db.query(Policy)
+        .filter(
+            and_(
+                Policy.policy_id == policy_key,
+                Policy.tenant_id == user.tenant_id,
+            )
+        )
+        .first()
+    )
+    if existing:
+        return {
+            "message": "Modernize readiness policy already exists",
+            "count": 0,
+            "policy_id": existing.id,
+            "skipped": True,
+        }
+
+    content = dict(DEFAULT_MODERNIZE_POLICY_CONTENT)
+    policy = Policy(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        policy_id=policy_key,
+        name="Modernization Readiness Standards",
+        description=(
+            "Machine-readable rules that clamp modernization readiness scores "
+            "(Java ≥17, required wiki sections, citation floor, tests, index freshness)."
+        ),
+        category=MODERNIZE_CATEGORY,
+        status="active",
+        applies_to=["backend", "architecture"],
+        tags=[MODERNIZE_TAG, "sop"],
+        level="tenant",
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db.add(policy)
+    db.flush()
+
+    try:
+        storage_key = storage_service.save_policy_content(
+            tenant_id=user.tenant_id or "default",
+            policy_id=policy_key,
+            category=MODERNIZE_CATEGORY,
+            content=content,
+            version="1.0.0",
+            content_yaml=None,
+        )
+    except Exception as e:
+        logger.warning("Storage save for modernize policy failed: %s", e)
+        storage_key = None
+
+    version = PolicyVersion(
+        id=str(uuid.uuid4()),
+        policy_id=policy.id,
+        version_number="1.0.0",
+        content=content,
+        content_yaml=None,
+        storage_key=storage_key,
+        is_draft=False,
+        requires_approval=False,
+        created_by=user.id,
+    )
+    db.add(version)
+    policy.active_version_id = version.id
+    db.add(
+        PolicyAuditLog(
+            id=str(uuid.uuid4()),
+            tenant_id=user.tenant_id,
+            policy_id=policy.id,
+            action_type="created",
+            user_id=user.id,
+            new_version=version.version_number,
+        )
+    )
+    db.commit()
+    return {
+        "message": "Seeded modernize readiness policy",
+        "count": 1,
+        "policy_id": policy.id,
+        "version_id": version.id,
+    }
+
+
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_policy(
     policy_data: PolicyCreate,
@@ -634,6 +743,8 @@ async def update_policy(
     policy.updated_at = datetime.now()
     
     # Create new draft version if content changed
+    latest_version = None
+    new_version = None
     if policy_data.content is not None or policy_data.content_yaml is not None:
         # Get latest version to increment
         latest_version = db.query(PolicyVersion).filter(
@@ -647,15 +758,25 @@ async def update_policy(
             if latest_version.is_draft and "-draft." in latest_version.version_number:
                 try:
                     draft_count = int(latest_version.version_number.split("-draft.")[1]) + 1
-                except:
+                except Exception:
                     pass
             new_version_number = f"{base_version}-draft.{draft_count}"
         else:
             new_version_number = "1.0.0-draft.1"
         
         # Determine content to save
-        new_content = policy_data.content or latest_version.content if latest_version else {}
-        new_content_yaml = policy_data.content_yaml or latest_version.content_yaml if latest_version else None
+        if policy_data.content is not None:
+            new_content = policy_data.content
+        elif latest_version:
+            new_content = latest_version.content or {}
+        else:
+            new_content = {}
+        if policy_data.content_yaml is not None:
+            new_content_yaml = policy_data.content_yaml
+        elif latest_version:
+            new_content_yaml = latest_version.content_yaml
+        else:
+            new_content_yaml = None
         
         # Save policy content to storage (mimics S3 structure)
         storage_key = storage_service.save_policy_content(
@@ -679,6 +800,7 @@ async def update_policy(
             created_by=user.id
         )
         db.add(new_version)
+        db.flush()
     
     # Create audit log
     audit_log = PolicyAuditLog(
@@ -688,14 +810,23 @@ async def update_policy(
         action_type="updated",
         user_id=user.id,
         previous_version=latest_version.version_number if latest_version else None,
-        new_version=new_version.version_number if policy_data.content is not None or policy_data.content_yaml is not None else None
+        new_version=new_version.version_number if new_version else None
     )
     db.add(audit_log)
     
     db.commit()
     db.refresh(policy)
-    
-    return PolicyResponse(
+
+    # Return draft version id so clients can publish immediately
+    active_number = None
+    if policy.active_version:
+        active_number = policy.active_version.version_number
+    elif policy.active_version_id:
+        ver = db.query(PolicyVersion).filter(PolicyVersion.id == policy.active_version_id).first()
+        if ver:
+            active_number = ver.version_number
+
+    response = PolicyResponse(
         id=policy.id,
         policy_id=policy.policy_id,
         name=policy.name,
@@ -706,12 +837,14 @@ async def update_policy(
         stacks=policy.stacks,
         tags=policy.tags,
         active_version_id=policy.active_version_id,
-        active_version_number=policy.active_version.version_number if policy.active_version else None,
+        active_version_number=active_number,
         created_by=policy.created_by,
         updated_by=policy.updated_by,
         created_at=policy.created_at,
         updated_at=policy.updated_at
     )
+    # Attach draft id via response model extras is awkward; clients re-fetch versions.
+    return response
 
 
 @router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
