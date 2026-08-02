@@ -54,13 +54,17 @@ class IndexerService:
         )
 
     def _resolve_clone_token(self, repository: Repository) -> Optional[str]:
-        if not repository.github_credential_id:
-            return None
-        cred_svc = GitHubCredentialService(self.db)
-        cred = cred_svc.get_credential(repository.tenant_id, repository.github_credential_id)
-        if not cred:
-            return None
-        return cred_svc.get_token(cred)
+        if repository.github_credential_id:
+            cred_svc = GitHubCredentialService(self.db)
+            cred = cred_svc.get_credential(repository.tenant_id, repository.github_credential_id)
+            if cred:
+                token = cred_svc.get_token(cred)
+                if token:
+                    return token
+        # Fallback for Build-graduated repos that used env GITHUB_TOKEN for push
+        import os
+
+        return os.getenv("GITHUB_TOKEN") or None
 
     async def execute_index_run(self, run: IndexRun) -> None:
         repository = self.db.query(Repository).filter(Repository.id == run.repository_id).first()

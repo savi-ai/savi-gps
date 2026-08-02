@@ -54,7 +54,10 @@ class ApplicationService:
         domain: Optional[str] = None,
         created_by: Optional[str] = None,
         repository_ids: Optional[List[str]] = None,
+        origin: Optional[str] = None,
     ) -> Application:
+        from app.services.build.project_application_service import normalize_origin
+
         name = name.strip()
         if not name:
             raise ValueError("Application name is required")
@@ -67,6 +70,11 @@ class ApplicationService:
         if existing:
             raise ValueError(f"Application '{name}' already exists")
 
+        resolved_origin = normalize_origin(origin, default="imported")
+        if repository_ids and resolved_origin == "generated":
+            # Creating with existing repos is inventory import, not greenfield generation
+            resolved_origin = "imported"
+
         app = Application(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
@@ -74,6 +82,7 @@ class ApplicationService:
             description=description,
             domain=domain,
             created_by=created_by,
+            origin=resolved_origin,
         )
         self.db.add(app)
         self.db.flush()
@@ -300,6 +309,7 @@ class ApplicationService:
             "name": app.name,
             "description": app.description,
             "domain": app.domain,
+            "origin": getattr(app, "origin", None) or "imported",
             "repository_count": len(memberships),
             "repositories_ready": ready,
             "created_at": app.created_at.isoformat() if app.created_at else None,

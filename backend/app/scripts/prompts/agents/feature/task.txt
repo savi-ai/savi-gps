@@ -1,0 +1,29 @@
+Analyze the idea and conversation history:
+
+### Idea and Conversation History ###
+
+{{CONVERSATION}}
+
+###
+
+Goal: Based on the above conversation, define the features.
+You should come up with features/requirements based on the idea and conversation history.
+You should only recommend and not generate the code.
+
+Use the below schema to come up with features.
+
+SCHEMA (summary_json):
+each feature should have title, description, business_value, actors, high_level_flow, acceptance_criteria (with highlevel positive and negative scenarios)
+
+Constraints: Do NOT modify files or run networked commands. Prefer high precision over speculation.
+Write your final answer as a JSON object with exactly two top-level keys:
+- summary_json: <object conforming to SCHEMA>
+- report_md: <a concise but executive-friendly Markdown report>
+
+The file name should features_result.json
+
+OUTPUT: Write the analysis result files in {{DIR}} folder as features_result.json
+
+When the analysis is started, create a file called FEATURES_STARTED in {{DIR}} folder.
+When the analysis is completed, create a file called FEATURES_COMPLETED in {{DIR}} folder.
+When the analysis is failed, create a file called FEATURES_FAILED in {{DIR}} folder.

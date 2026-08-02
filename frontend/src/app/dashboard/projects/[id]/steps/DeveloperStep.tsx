@@ -111,12 +111,20 @@ export function DeveloperStepContent({ project, canEdit, onUpdate }: StepContent
   const handleSaveGithubUrl = async () => {
     try {
       setSavingGithubUrl(true)
-      await apiClient.put(
+      setError(null)
+      const response = await apiClient.put(
         `/api/v1/golden-path/projects/${project.id}/github-repo`,
         null,
         { params: { github_repo_url: githubRepoUrl } }
       )
       setEditingGithubUrl(false)
+      if (response.data?.graduation?.repository?.id) {
+        setGithubPushResult({
+          success: true,
+          message: 'GitHub URL saved and registered in Intelligence',
+          graduation: response.data.graduation,
+        })
+      }
       onUpdate()
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to save GitHub URL')
@@ -343,8 +351,34 @@ export function DeveloperStepContent({ project, canEdit, onUpdate }: StepContent
                 </div>
               )}
               {githubPushResult && githubPushResult.success && (
-                <div className="github-success-message">
-                  ✓ {githubPushResult.message}
+                <div className="github-success-message space-y-1">
+                  <div>✓ {githubPushResult.message}</div>
+                  {githubPushResult.graduation?.repository?.id && (
+                    <div className="text-sm">
+                      Graduated into Intelligence:{' '}
+                      <a
+                        href={`/dashboard/intelligence/repositories/${githubPushResult.graduation.repository.id}`}
+                        className="underline"
+                      >
+                        {githubPushResult.graduation.repository.github_full_name ||
+                          githubPushResult.graduation.repository.name}
+                      </a>
+                      {githubPushResult.graduation.index_run_id
+                        ? ' — indexing queued'
+                        : ''}
+                      {githubPushResult.graduation.application_id ? (
+                        <>
+                          {' · '}
+                          <a
+                            href={`/dashboard/intelligence/applications/${githubPushResult.graduation.application_id}`}
+                            className="underline"
+                          >
+                            Application
+                          </a>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

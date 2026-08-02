@@ -142,6 +142,11 @@ export default function ProjectsPage() {
                               {project.source_application_name}
                             </span>
                           )}
+                          {project.mode && (
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {project.mode}
+                            </Badge>
+                          )}
                           {project.source_plan_id && (
                             <Badge variant="secondary" className="text-xs">
                               From modernization plan

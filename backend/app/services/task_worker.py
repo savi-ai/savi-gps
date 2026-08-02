@@ -224,6 +224,28 @@ class TaskWorker:
                             if git_result.get('success'):
                                 logger.info(f"Successfully pushed code to GitHub: {git_result.get('message')}")
                                 result['github_push'] = git_result
+                                try:
+                                    from app.services.build.project_repo_graduation_service import (
+                                        graduate_project_github_repo,
+                                    )
+
+                                    graduation = graduate_project_github_repo(
+                                        db,
+                                        project,
+                                        github_repo_url=input_data.get('github_repo_url'),
+                                        start_index=True,
+                                    )
+                                    result['graduation'] = graduation
+                                except Exception as grad_err:
+                                    logger.warning(
+                                        "Auto-push graduation failed for project %s: %s",
+                                        project.id,
+                                        grad_err,
+                                    )
+                                    result['graduation'] = {
+                                        'success': False,
+                                        'error': str(grad_err),
+                                    }
                             else:
                                 logger.warning(f"Failed to push code to GitHub: {git_result.get('error')}")
                                 result['github_push'] = git_result

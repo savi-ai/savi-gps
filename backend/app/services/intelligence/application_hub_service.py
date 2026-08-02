@@ -146,8 +146,10 @@ def build_application_hub(db: Session, tenant_id: str, application_id: str) -> O
             "id": p.id,
             "name": p.name,
             "pillar": p.pillar or "build",
+            "mode": getattr(p, "mode", None),
             "current_step": p.current_step,
             "source_application_id": p.source_application_id,
+            "target_application_id": p.source_application_id,
             "source_plan_id": p.source_plan_id,
             "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         }

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { buildApi } from '@/lib/api/build'
 import { useRepositories, useApplications } from '@/hooks/queries/useIntelligence'
@@ -16,8 +16,36 @@ import { cn } from '@/lib/utils'
 import { Plus, Loader2 } from 'lucide-react'
 import { ProjectContextPreview } from '@/components/build/ProjectContextPreview'
 
+type ProjectMode = 'greenfield' | 'enhance' | 'extend'
+
+const MODE_OPTIONS: {
+  value: ProjectMode
+  title: string
+  description: string
+}[] = [
+  {
+    value: 'greenfield',
+    title: 'From scratch',
+    description:
+      'Creates a new Application for you (origin: generated). No existing repos required — agents build it.',
+  },
+  {
+    value: 'enhance',
+    title: 'Enhance existing Application',
+    description:
+      'Pick an Application you already have. Agents use its current repos as context.',
+  },
+  {
+    value: 'extend',
+    title: 'Extend existing Application',
+    description:
+      'Pick an Application and optionally add more repos (or later create new ones under it).',
+  },
+]
+
 export default function NewProjectPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { hasPermission, hasCapability } = useAuth()
   const [formData, setFormData] = useState({
     name: '',
@@ -28,10 +56,22 @@ export default function NewProjectPage() {
     target_audience: '',
     default_execution_mode: 'copilot' as 'autopilot' | 'copilot',
   })
+  const [mode, setMode] = useState<ProjectMode>('greenfield')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([])
   const [selectedApplicationId, setSelectedApplicationId] = useState('')
+
+  useEffect(() => {
+    const appId = searchParams.get('application_id') || ''
+    const modeParam = searchParams.get('mode') as ProjectMode | null
+    if (appId) {
+      setSelectedApplicationId(appId)
+      setMode(modeParam && ['enhance', 'extend', 'greenfield'].includes(modeParam) ? modeParam : 'enhance')
+    } else if (modeParam && ['enhance', 'extend', 'greenfield'].includes(modeParam)) {
+      setMode(modeParam)
+    }
+  }, [searchParams])
 
   const { data: repositories = [], isLoading: reposLoading } = useRepositories({
     enabled: hasCapability('intelligence'),
@@ -40,10 +80,11 @@ export default function NewProjectPage() {
     enabled: hasCapability('intelligence'),
   })
 
+  const needsApp = mode === 'enhance' || mode === 'extend'
   const { data: contextPreview, isLoading: previewLoading } = useContextPreview(
     selectedRepoIds,
-    selectedApplicationId || undefined,
-    hasCapability('intelligence') && (selectedRepoIds.length > 0 || !!selectedApplicationId)
+    needsApp ? selectedApplicationId || undefined : undefined,
+    hasCapability('intelligence') && (selectedRepoIds.length > 0 || (needsApp && !!selectedApplicationId))
   )
 
   const toggleRepo = (repoId: string) => {
@@ -73,11 +114,15 @@ export default function NewProjectPage() {
       setError('Project name must be at least 3 characters')
       return
     }
+    if (needsApp && !selectedApplicationId) {
+      setError('Select a target Application for enhance / extend')
+      return
+    }
 
     try {
       setLoading(true)
       setError(null)
-      await buildApi.createProject({
+      const created = await buildApi.createProject({
         name: formData.name.trim(),
         description: formData.description.trim() || null,
         business_value: formData.business_value.trim() || null,
@@ -85,10 +130,20 @@ export default function NewProjectPage() {
         priority: formData.priority || null,
         target_audience: formData.target_audience.trim() || null,
         default_execution_mode: formData.default_execution_mode,
+        mode,
         repository_ids: selectedRepoIds.length > 0 ? selectedRepoIds : undefined,
-        application_id: selectedApplicationId || undefined,
+        application_id: needsApp ? selectedApplicationId : undefined,
+        target_application_id: needsApp ? selectedApplicationId : undefined,
       })
-      router.push('/dashboard/projects')
+      const appId =
+        created?.target_application_id ||
+        created?.source_application_id ||
+        selectedApplicationId
+      if (appId) {
+        router.push(`/dashboard/intelligence/applications/${appId}`)
+      } else {
+        router.push('/dashboard/projects')
+      }
     } catch (err: unknown) {
       const detail =
         err && typeof err === 'object' && 'response' in err
@@ -104,7 +159,7 @@ export default function NewProjectPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Create New Project</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Set up a new AI-guided delivery workflow
+          Delivery workstream that creates or targets an Application
         </p>
       </div>
 
@@ -112,11 +167,53 @@ export default function NewProjectPage() {
         <CardHeader>
           <CardTitle>Project Details</CardTitle>
           <CardDescription>
-            Provide context to help AI agents generate better outputs
+            Choose how this project relates to estate Applications, then provide context for agents
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-3">
+              <Label>How does this project relate to an Application?</Label>
+              <p className="text-xs text-muted-foreground">
+                Every project targets an Application. &quot;From scratch&quot; creates one;
+                the other modes use an Application you already have.
+              </p>
+              <div className="grid gap-3">
+                {MODE_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={cn(
+                      'flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors',
+                      mode === opt.value
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50',
+                      loading && 'cursor-not-allowed opacity-60'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="project_mode"
+                      value={opt.value}
+                      checked={mode === opt.value}
+                      onChange={() => {
+                        setMode(opt.value)
+                        if (opt.value === 'greenfield') {
+                          setSelectedApplicationId('')
+                        }
+                        setError(null)
+                      }}
+                      disabled={loading}
+                      className="mt-0.5 accent-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold">{opt.title}</p>
+                      <p className="text-xs text-muted-foreground">{opt.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="project-name">
                 Project Name <span className="text-destructive">*</span>
@@ -130,6 +227,12 @@ export default function NewProjectPage() {
                 autoFocus
                 maxLength={100}
               />
+              {mode === 'greenfield' && (
+                <p className="text-xs text-muted-foreground">
+                  Saving will create a new Application named after this project (you can rename it later).
+                  That is not &quot;no linkage&quot; — the project always targets that Application.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -177,7 +280,7 @@ export default function NewProjectPage() {
                   value={formData.priority}
                   onChange={(e) => handleChange('priority', e.target.value)}
                   disabled={loading}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 >
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
@@ -193,7 +296,7 @@ export default function NewProjectPage() {
                 id="target-audience"
                 value={formData.target_audience}
                 onChange={(e) => handleChange('target_audience', e.target.value)}
-                placeholder="e.g., Enterprise customers, End users"
+                placeholder="Who will use this?"
                 disabled={loading}
                 maxLength={100}
               />
@@ -213,12 +316,12 @@ export default function NewProjectPage() {
                     title: 'Autopilot',
                     description: 'Fully automated end-to-end delivery',
                   },
-                ].map((mode) => (
+                ].map((execMode) => (
                   <label
-                    key={mode.value}
+                    key={execMode.value}
                     className={cn(
                       'flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors',
-                      formData.default_execution_mode === mode.value
+                      formData.default_execution_mode === execMode.value
                         ? 'border-primary bg-primary/5'
                         : 'border-border hover:border-primary/50',
                       loading && 'cursor-not-allowed opacity-60'
@@ -227,26 +330,28 @@ export default function NewProjectPage() {
                     <input
                       type="radio"
                       name="execution_mode"
-                      value={mode.value}
-                      checked={formData.default_execution_mode === mode.value}
-                      onChange={() => handleChange('default_execution_mode', mode.value)}
+                      value={execMode.value}
+                      checked={formData.default_execution_mode === execMode.value}
+                      onChange={() => handleChange('default_execution_mode', execMode.value)}
                       disabled={loading}
                       className="mt-0.5 accent-primary"
                     />
                     <div>
-                      <p className="text-sm font-semibold">{mode.title}</p>
-                      <p className="text-xs text-muted-foreground">{mode.description}</p>
+                      <p className="text-sm font-semibold">{execMode.title}</p>
+                      <p className="text-xs text-muted-foreground">{execMode.description}</p>
                     </div>
                   </label>
                 ))}
               </div>
             </div>
 
-            {hasCapability('intelligence') && (
+            {hasCapability('intelligence') && needsApp && (
               <div className="space-y-2">
-                <Label htmlFor="application">Link application (optional)</Label>
+                <Label htmlFor="application">
+                  Target application <span className="text-destructive">*</span>
+                </Label>
                 <p className="text-xs text-muted-foreground">
-                  Select an application to link all of its repositories as agent context.
+                  Member repositories are linked as agent context.
                 </p>
                 <select
                   id="application"
@@ -255,19 +360,20 @@ export default function NewProjectPage() {
                   disabled={loading}
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 >
-                  <option value="">None</option>
+                  <option value="">Select application…</option>
                   {applications.map((app) => (
                     <option key={app.id} value={app.id}>
                       {app.name} ({app.repository_count} repos)
+                      {app.origin ? ` · ${app.origin}` : ''}
                     </option>
                   ))}
                 </select>
               </div>
             )}
 
-            {hasCapability('intelligence') && (
+            {hasCapability('intelligence') && mode !== 'greenfield' && (
               <div className="space-y-2">
-                <Label>Link repositories (optional)</Label>
+                <Label>Additional repositories (optional)</Label>
                 <p className="text-xs text-muted-foreground">
                   Agents will use wiki and code context from linked repos.
                 </p>
@@ -302,7 +408,7 @@ export default function NewProjectPage() {
               </div>
             )}
 
-            {(selectedRepoIds.length > 0 || selectedApplicationId) && (
+            {(selectedRepoIds.length > 0 || (needsApp && selectedApplicationId)) && (
               <ProjectContextPreview preview={contextPreview ?? null} loading={previewLoading} />
             )}
 

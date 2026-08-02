@@ -1,0 +1,33 @@
+The recommended requirements/features in JSON format are at: {{FEATURES_JSON}}
+
+Goal: Based on recommended requirements/features, define the architecture.
+You should come up with architecture based on services and other details and the analysis json.
+You should only generate the json to draw architecture on react flow and not generate the code.
+
+The architecture should follow C4 model and this JSON should be the first level, context diagram. It should have high level services and not too many components.
+
+Use the below schema to come up with architecture.
+
+SCHEMA (summary_json): {"project_name": "{{PROJECT_NAME}}","version": "1.0","last_updated": "","nodes": [{"id": "string","type": "default","position": {"x": number, "y": number},"data": {"label": "string","description": "string","technology": "string"}}],"edges": [{"id": "string","source": "string","target": "string","type": "default","label": "string"}]}
+
+The nodes are services from the functional requirements in the analysis json.
+The position of node is x, y coordinates in react flow diagram/canvas.
+label and description of nodes are human friendly name and short description.
+the technology stack should also come from requirements results, if not suggest something.
+the id of node should be some identifier which will be used in edges source and targets.
+The edges are connections from one service to other.
+come up with connections that makes sense in the architecture diagram based on services.
+label of edge is one word details of what the connection is, for eg: routes, calls, notifies, etc.
+
+Constraints: Do NOT modify files or run networked commands. Prefer high precision over speculation.
+Write your final answer as a JSON object with exactly two top-level keys:
+- summary_json: <object conforming to SCHEMA>
+- report_md: <a concise but executive-friendly Markdown report>
+
+The file name should architecture_result.json
+
+OUTPUT: Write the architecture result files in {{DIR}} folder as architecture_result.json
+
+When the analysis is started, create a file called ARCHITECTURE_STARTED in {{DIR}} folder.
+When the analysis is completed, create a file called ARCHITECTURE_COMPLETED in {{DIR}} folder.
+When the analysis is failed, create a file called ARCHITECTURE_FAILED in {{DIR}} folder.

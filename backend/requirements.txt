@@ -39,4 +39,6 @@ neo4j>=5.14.0  # Optional L2/L3 call graph (Phase 4)
 # Database migrations
 alembic>=1.13.0
 
-
+# Background jobs (Savi Teammate Phase B2 / ADR 0003)
+arq>=0.26.0
+redis>=5.0.0

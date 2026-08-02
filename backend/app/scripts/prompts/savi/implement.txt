@@ -1,0 +1,18 @@
+In the current working directory, implement a minimal change for this ticket.
+
+## Title
+{{TITLE}}
+
+## Plan file
+Follow the plan at: {{PLAN_PATH}}
+
+## Work id
+{{SHORT_ID}}
+
+## Constraints
+- Do not merge or deploy.
+- Prefer small, reviewable edits.
+- Keep changes scoped to what the plan requires.
+- If you create helper notes, put them under `.savi/work/{{SHORT_ID}}/`.
+
+Implement the change now.

@@ -571,6 +571,107 @@ async def seed_modernize_readiness_policy(
     }
 
 
+@router.post("/seed-savi-governance", status_code=status.HTTP_200_OK)
+async def seed_savi_governance_policy(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create the default Savi Teammate no-merge/deploy governance policy if missing."""
+    if not has_permission(user, "can_manage_policies", db):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    from app.services.savi_governance_policy import (
+        DEFAULT_SAVI_GOV_POLICY_CONTENT,
+        SAVI_GOV_CATEGORY,
+        SAVI_GOV_POLICY_KEY,
+        SAVI_GOV_TAG,
+    )
+
+    existing = (
+        db.query(Policy)
+        .filter(
+            and_(
+                Policy.policy_id == SAVI_GOV_POLICY_KEY,
+                Policy.tenant_id == user.tenant_id,
+            )
+        )
+        .first()
+    )
+    if existing:
+        return {
+            "message": "Savi governance policy already exists",
+            "count": 0,
+            "policy_id": existing.id,
+            "skipped": True,
+        }
+
+    content = dict(DEFAULT_SAVI_GOV_POLICY_CONTENT)
+    policy = Policy(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        policy_id=SAVI_GOV_POLICY_KEY,
+        name="Savi Teammate — No Merge / Deploy",
+        description=(
+            "Savi may open PRs and use team connectors; merge and deploy stay human-gated. "
+            "Runtime enforcement: app.services.savi_policy_gate."
+        ),
+        category=SAVI_GOV_CATEGORY,
+        status="active",
+        applies_to=["savi", "teammate", "orchestration"],
+        tags=[SAVI_GOV_TAG, "governance", "sop"],
+        level="tenant",
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    db.add(policy)
+    db.flush()
+
+    try:
+        storage_key = storage_service.save_policy_content(
+            tenant_id=user.tenant_id or "default",
+            policy_id=SAVI_GOV_POLICY_KEY,
+            category=SAVI_GOV_CATEGORY,
+            content=content,
+            version="1.0.0",
+            content_yaml=None,
+        )
+    except Exception as e:
+        logger.warning("Storage save for Savi governance policy failed: %s", e)
+        storage_key = None
+
+    version = PolicyVersion(
+        id=str(uuid.uuid4()),
+        policy_id=policy.id,
+        version_number="1.0.0",
+        content=content,
+        content_yaml=None,
+        storage_key=storage_key,
+        is_draft=False,
+        requires_approval=False,
+        created_by=user.id,
+    )
+    db.add(version)
+    policy.active_version_id = version.id
+    db.add(
+        PolicyAuditLog(
+            id=str(uuid.uuid4()),
+            tenant_id=user.tenant_id,
+            policy_id=policy.id,
+            action_type="created",
+            user_id=user.id,
+            new_version=version.version_number,
+        )
+    )
+    db.commit()
+    return {
+        "message": "Seeded Savi governance policy",
+        "count": 1,
+        "policy_id": policy.id,
+        "version_id": version.id,
+        "policy_key": SAVI_GOV_POLICY_KEY,
+    }
+
+
 @router.post("", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
 async def create_policy(
     policy_data: PolicyCreate,
