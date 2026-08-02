@@ -40,7 +40,22 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL: str = "claude-sonnet-4-5-20250929"
     AWS_REGION: Optional[str] = "us-east-1"
+    # Standard AWS SDK keys (preferred) — also accept BEDROCK_AWS_* aliases via env
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    BEDROCK_AWS_ACCESS_KEY_ID: Optional[str] = None
+    BEDROCK_AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    BEDROCK_AWS_REGION: Optional[str] = None
     BEDROCK_MODEL_ID: Optional[str] = "anthropic.claude-3-sonnet-20240229-v1:0"
+    LLM_MAX_RETRIES: int = 3
+    # Wiki generation: cli | api | auto (CLI then API then heuristic)
+    WIKI_GENERATION_MODE: str = "auto"
+    # Incremental wiki: compare last stored git_head to clone HEAD
+    WIKI_INCREMENTAL_ENABLED: bool = True
+    WIKI_INCREMENTAL_MAX_FILES: int = 40
+    WIKI_INCREMENTAL_MAX_DIFF_CHARS: int = 24000
+    # Repo-relative path for optional GitHub wiki export (also ignored for regen)
+    WIKI_GITHUB_EXPORT_PATH: str = "docs/savi-wiki"
 
     # SOP Configuration
     SOP_DIRECTORY: str = str(Path(__file__).parent.parent.parent / "sops")
@@ -114,6 +129,11 @@ class Settings(BaseSettings):
         if self.S3_REGION is None:
             object.__setattr__(self, "S3_REGION", self.AWS_REGION)
 
+        mode = (self.WIKI_GENERATION_MODE or "auto").lower().strip()
+        if mode not in {"cli", "api", "auto"}:
+            mode = "auto"
+        object.__setattr__(self, "WIKI_GENERATION_MODE", mode)
+
         if self.ENVIRONMENT != "production":
             return self
 
@@ -128,6 +148,8 @@ class Settings(BaseSettings):
             errors.append("ANTHROPIC_API_KEY is required in production when LLM_PROVIDER=claude")
         if self.LLM_PROVIDER == "openai" and not self.OPENAI_API_KEY:
             errors.append("OPENAI_API_KEY is required in production when LLM_PROVIDER=openai")
+        if self.LLM_PROVIDER == "bedrock" and not self.BEDROCK_MODEL_ID:
+            errors.append("BEDROCK_MODEL_ID is required in production when LLM_PROVIDER=bedrock")
 
         if self.CORS_ORIGINS.strip() == "*":
             errors.append("CORS_ORIGINS must be an explicit allowlist in production (not '*')")

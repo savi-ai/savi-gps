@@ -19,6 +19,7 @@ interface ReadinessSignal {
   detail: string
   repository_id?: string
   repository_name?: string
+  failed_policies?: Array<{ policy_name: string; message: string; rule_id: string }>
 }
 
 interface RepoReadiness {
@@ -43,6 +44,8 @@ interface ApplicationReadiness {
   readiness_level?: string
   signals: ReadinessSignal[]
   repositories: RepoReadiness[]
+  policy_gaps?: Array<{ message: string; policy_name: string; signal_id: string }>
+  policies_applied?: Array<{ policy_name: string; version_number: string }>
 }
 
 const LEVEL_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -188,6 +191,11 @@ export default function ApplicationReadinessPanel({
                     <div>
                       <p className="text-sm font-medium">{sig.label}</p>
                       <p className="text-xs text-muted-foreground">{sig.detail}</p>
+                      {(sig.failed_policies || []).map((f, i) => (
+                        <p key={i} className="mt-0.5 text-xs text-destructive">
+                          Failed policy: {f.message}
+                        </p>
+                      ))}
                       {sig.repository_name && (
                         <p className="mt-1 text-xs text-muted-foreground">
                           From {sig.repository_name}
@@ -202,6 +210,25 @@ export default function ApplicationReadinessPanel({
                 </div>
               )
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {assessed && (data.policy_gaps || []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-destructive">Policy gaps</CardTitle>
+            <CardDescription>Failures against tenant modernization policies</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1">
+              {data.policy_gaps!.map((g, i) => (
+                <li key={i} className="text-xs text-destructive">
+                  Failed policy: {g.message}
+                  {g.policy_name ? ` (${g.policy_name})` : ''}
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       )}

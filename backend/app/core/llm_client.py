@@ -49,49 +49,112 @@ class OpenAIClient(LLMClient):
 
 
 class BedrockClient(LLMClient):
-    """AWS Bedrock LLM client"""
-    
-    def __init__(self):
+    """AWS Bedrock Runtime client using the Converse API (roles + retries)."""
+
+    def __init__(self, model_id: Optional[str] = None):
         try:
             import boto3
-            self.bedrock_runtime = boto3.client(
-                'bedrock-runtime',
-                region_name=settings.AWS_REGION
-            )
-            self.model_id = settings.BEDROCK_MODEL_ID
-        except ImportError:
-            raise ImportError("boto3 package not installed. Install with: pip install boto3")
-    
-    async def generate(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
-        messages = []
-        if system_prompt:
-            messages.append({"role": "user", "content": f"{system_prompt}\n\n{prompt}"})
-        else:
-            messages.append({"role": "user", "content": prompt})
-        return await self.chat(messages, **kwargs)
-    
-    async def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
-        import json
-        import asyncio
-        
-        # Convert messages to Bedrock format
-        prompt = "\n".join([msg["content"] for msg in messages])
-        
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": kwargs.get("max_tokens", 4000),
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
-        })
-        
-        response = self.bedrock_runtime.invoke_model(
-            modelId=self.model_id,
-            body=body
+        except ImportError as e:
+            raise ImportError("boto3 package not installed. Install with: pip install boto3") from e
+
+        self.model_id = model_id or settings.BEDROCK_MODEL_ID
+        if not self.model_id:
+            raise ValueError("BEDROCK_MODEL_ID is required when LLM_PROVIDER=bedrock")
+
+        region = (
+            settings.BEDROCK_AWS_REGION
+            or settings.AWS_REGION
+            or "us-east-1"
         )
-        
-        response_body = json.loads(response['body'].read())
-        return response_body['content'][0]['text']
+        access_key = settings.AWS_ACCESS_KEY_ID or settings.BEDROCK_AWS_ACCESS_KEY_ID
+        secret_key = settings.AWS_SECRET_ACCESS_KEY or settings.BEDROCK_AWS_SECRET_ACCESS_KEY
+
+        client_kwargs: Dict[str, Any] = {"service_name": "bedrock-runtime", "region_name": region}
+        if access_key and secret_key:
+            client_kwargs["aws_access_key_id"] = access_key
+            client_kwargs["aws_secret_access_key"] = secret_key
+        # else: default credential chain (env profile, IRSA, instance role)
+
+        self.region = region
+        self.bedrock_runtime = boto3.client(**client_kwargs)
+
+    async def generate(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        return await self.chat(messages, **kwargs)
+
+    def _split_messages(
+        self, messages: List[Dict[str, str]]
+    ) -> tuple[Optional[str], List[Dict[str, Any]]]:
+        system_parts: List[str] = []
+        converse_messages: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = (msg.get("role") or "user").lower()
+            content = msg.get("content") or ""
+            if role == "system":
+                system_parts.append(content)
+                continue
+            if role not in ("user", "assistant"):
+                role = "user"
+            converse_messages.append(
+                {"role": role, "content": [{"text": content}]}
+            )
+        if not converse_messages:
+            converse_messages = [{"role": "user", "content": [{"text": ""}]}]
+        # Converse requires alternating roles starting with user
+        if converse_messages[0]["role"] != "user":
+            converse_messages.insert(0, {"role": "user", "content": [{"text": "(context)"}]})
+        system = "\n\n".join(system_parts) if system_parts else None
+        return system, converse_messages
+
+    def _invoke_converse(
+        self,
+        system: Optional[str],
+        converse_messages: List[Dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        kwargs: Dict[str, Any] = {
+            "modelId": self.model_id,
+            "messages": converse_messages,
+            "inferenceConfig": {
+                "maxTokens": max_tokens,
+                "temperature": temperature,
+            },
+        }
+        if system:
+            kwargs["system"] = [{"text": system}]
+
+        response = self.bedrock_runtime.converse(**kwargs)
+        parts = response.get("output", {}).get("message", {}).get("content") or []
+        texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
+        if not texts:
+            raise RuntimeError("Bedrock Converse returned empty content")
+        return "".join(texts)
+
+    async def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        import asyncio
+
+        from app.core.llm_retry import with_llm_retries
+
+        system, converse_messages = self._split_messages(messages)
+        max_tokens = int(kwargs.get("max_tokens", 8192))
+        temperature = float(kwargs.get("temperature", 0.3))
+
+        async def _once() -> str:
+            return await asyncio.to_thread(
+                self._invoke_converse,
+                system,
+                converse_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+        text = await with_llm_retries(_once, label="bedrock")
+        return text.replace("```json", "").replace("```", "")
 
 
 class ClaudeClient(LLMClient):
@@ -126,34 +189,34 @@ class ClaudeClient(LLMClient):
     
     async def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """Chat completion using Claude"""
-        # Convert messages to Claude format
-        # Claude uses "user" and "assistant" roles, and supports system messages
+        from app.core.llm_retry import with_llm_retries
+
         claude_messages = []
         system_message = None
-        
+
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            
+
             if role == "system":
                 system_message = content
             elif role in ["user", "assistant"]:
                 claude_messages.append({"role": role, "content": content})
             else:
-                # Convert other roles to "user"
                 claude_messages.append({"role": "user", "content": content})
-        
-        response = await self.client.messages.create(
-            model=kwargs.get("model", self.model),
-            max_tokens=kwargs.get("max_tokens", 8192),
-            system=system_message,
-            messages=claude_messages,
-            temperature=kwargs.get("temperature", 0.7)
-        )
-        
-        response_text = response.content[0].text
-        response_text = response_text.replace("```json", "").replace("```", "")
-        return response_text
+
+        async def _once() -> str:
+            response = await self.client.messages.create(
+                model=kwargs.get("model", self.model),
+                max_tokens=kwargs.get("max_tokens", 8192),
+                system=system_message,
+                messages=claude_messages,
+                temperature=kwargs.get("temperature", 0.7),
+            )
+            response_text = response.content[0].text
+            return response_text.replace("```json", "").replace("```", "")
+
+        return await with_llm_retries(_once, label="claude")
 
 
 class OllamaClient(LLMClient):
@@ -283,23 +346,21 @@ class OllamaClient(LLMClient):
                     raise Exception(f"Ollama API error: {response.status}")
 
 
-def get_llm_client() -> LLMClient:
-    """Factory function to get appropriate LLM client"""
-    provider = settings.LLM_PROVIDER.lower()
-    
-    if provider == "openai":
+def get_llm_client(provider: Optional[str] = None, model_id: Optional[str] = None) -> LLMClient:
+    """Factory function to get appropriate LLM client."""
+    resolved = (provider or settings.LLM_PROVIDER or "claude").lower()
+
+    if resolved == "openai":
         if not settings.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY not set")
         return OpenAIClient()
-    elif provider == "claude" or provider == "anthropic":
+    if resolved in {"claude", "anthropic"}:
         if not settings.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY not set")
         return ClaudeClient()
-    elif provider == "bedrock":
-        return BedrockClient()
-    elif provider == "ollama":
-        return OllamaClient()
-    else:
-        # Default to Ollama for development
-        return OllamaClient()
-
+    if resolved == "bedrock":
+        return BedrockClient(model_id=model_id)
+    if resolved == "ollama":
+        return OllamaClient(model=model_id or "llama3.1")
+    logger.warning("Unknown LLM_PROVIDER=%s; falling back to Ollama", resolved)
+    return OllamaClient()

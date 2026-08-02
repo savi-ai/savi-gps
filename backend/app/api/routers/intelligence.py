@@ -575,7 +575,8 @@ async def rebuild_graph(
         format_call_graph_for_wiki,
     )
     from app.services.intelligence.neo4j_graph_writer import sync_graph_to_neo4j
-    from app.services.intelligence.spec_drift_service import persist_specs_index, scan_kiro_specs
+    from app.services.intelligence.spec_drift_service import persist_specs_index, scan_specs
+    from app.services.tenant_config_service import TenantConfigService
 
     clone_svc = RepoCloneService()
     indexer = IndexerService(db)
@@ -589,9 +590,16 @@ async def rebuild_graph(
         run = indexer.get_latest_run(repo.id)
         if run:
             sync_graph_to_neo4j(repo, run.id, graph)
-        specs = scan_kiro_specs(clone_path)
-        if specs:
+        layer = TenantConfigService(db).get_spec_layer_settings(user.tenant_id)
+        if layer["enabled"]:
+            specs = scan_specs(
+                clone_path,
+                folder=layer["specs_folder"],
+                coding_agent=layer["coding_agent"],
+            )
             persist_specs_index(analysis_dir, specs)
+        else:
+            persist_specs_index(analysis_dir, [])
         call_graph_md = format_call_graph_for_wiki(graph)
         if call_graph_md:
             (analysis_dir / "call_graph_context.md").write_text(call_graph_md, encoding="utf-8")

@@ -118,6 +118,7 @@ export default function RepositoryDetailPage() {
     wiki_pending_review?: number
     wiki_stale?: number
     spec_count?: number
+    has_specs?: boolean
     has_kiro_specs?: boolean
   } | null>(null)
   const [assignAppId, setAssignAppId] = useState('')
@@ -302,8 +303,8 @@ export default function RepositoryDetailPage() {
             {(driftStatus?.wiki_pending_review ?? 0) > 0 && (
               <Badge variant="outline">{driftStatus?.wiki_pending_review} pending review</Badge>
             )}
-            {driftStatus?.has_kiro_specs && (
-              <Badge variant="outline">{driftStatus?.spec_count ?? 0} Kiro specs</Badge>
+            {(driftStatus?.has_specs || driftStatus?.has_kiro_specs) && (
+              <Badge variant="outline">{driftStatus?.spec_count ?? 0} specs</Badge>
             )}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">

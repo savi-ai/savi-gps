@@ -42,6 +42,11 @@ def compute_application_readiness(
     all_signals: Dict[str, Dict[str, Any]] = {}
     scores: List[int] = []
     levels: List[str] = []
+    all_gaps: List[Dict[str, Any]] = []
+    version_ids: List[str] = []
+    policies_applied: List[Dict[str, Any]] = []
+    seen_versions = set()
+    seen_policy_keys = set()
 
     for membership, repo in memberships:
         if repo.status != "ready":
@@ -71,6 +76,18 @@ def compute_application_readiness(
             if not existing or sig.get("score", 100) < existing.get("score", 100):
                 all_signals[sid] = {**sig, "repository_id": repo.id, "repository_name": repo.name}
 
+        for gap in rd.get("policy_gaps") or []:
+            all_gaps.append({**gap, "repository_id": repo.id, "repository_name": repo.name})
+        for vid in rd.get("policy_version_ids") or []:
+            if vid not in seen_versions:
+                seen_versions.add(vid)
+                version_ids.append(vid)
+        for applied in rd.get("policies_applied") or []:
+            key = applied.get("version_id") or applied.get("policy_id")
+            if key and key not in seen_policy_keys:
+                seen_policy_keys.add(key)
+                policies_applied.append(applied)
+
         repo_rows.append({
             "repository_id": repo.id,
             "repository_name": repo.github_full_name or repo.name,
@@ -80,6 +97,7 @@ def compute_application_readiness(
             "readiness_level": level,
             "status": repo.status,
             "signals": rd.get("signals") or [],
+            "policy_gaps": rd.get("policy_gaps") or [],
         })
 
     aggregate_score = round(sum(scores) / len(scores)) if scores else 0
@@ -94,4 +112,7 @@ def compute_application_readiness(
         "readiness_level": aggregate_level,
         "signals": list(all_signals.values()),
         "repositories": repo_rows,
+        "policy_version_ids": version_ids,
+        "policies_applied": policies_applied,
+        "policy_gaps": all_gaps,
     }

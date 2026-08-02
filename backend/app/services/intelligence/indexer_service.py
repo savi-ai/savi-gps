@@ -155,8 +155,9 @@ class IndexerService:
                 from app.services.intelligence.neo4j_graph_writer import sync_graph_to_neo4j
                 from app.services.intelligence.spec_drift_service import (
                     persist_specs_index,
-                    scan_kiro_specs,
+                    scan_specs,
                 )
+                from app.services.tenant_config_service import TenantConfigService
 
                 migrate_legacy_analysis_dir(repository)
                 analysis_dir = get_analysis_dir(repository)
@@ -164,9 +165,18 @@ class IndexerService:
                 persist_graph_index(analysis_dir, graph_index.to_dict())
                 sync_graph_to_neo4j(repository, run.id, graph_index)
 
-                specs = scan_kiro_specs(clone_path)
-                if specs:
+                layer = TenantConfigService(self.db).get_spec_layer_settings(
+                    repository.tenant_id
+                )
+                if layer["enabled"]:
+                    specs = scan_specs(
+                        clone_path,
+                        folder=layer["specs_folder"],
+                        coding_agent=layer["coding_agent"],
+                    )
                     persist_specs_index(analysis_dir, specs)
+                else:
+                    persist_specs_index(analysis_dir, [])
 
                 call_graph_md = format_call_graph_for_wiki(graph_index)
                 if call_graph_md:

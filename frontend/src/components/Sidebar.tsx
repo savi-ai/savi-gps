@@ -19,7 +19,6 @@ import {
   ClipboardList,
   BarChart3,
   Shield,
-  FileText,
   Settings,
   ClipboardCheck,
   Settings2,
@@ -148,12 +147,6 @@ const NAV_GROUPS: NavGroup[] = [
         roles: ['admin'],
       },
       {
-        id: 'admin-sops',
-        label: 'SOPs',
-        icon: FileText,
-        path: '/dashboard/admin/sops',
-      },
-      {
         id: 'admin-wiki-review',
         label: 'Wiki Review',
         icon: ClipboardCheck,
@@ -201,6 +194,13 @@ export default function Sidebar() {
     if (item.capability && !hasCapability(item.capability)) return false
     if (item.permission && !hasPermission(item.permission)) return false
     if (item.roles && !item.roles.some((role) => hasRole(role))) return false
+    // Specs & Drift only when tenant has specs scanning enabled
+    if (
+      item.id === 'intelligence-specs' &&
+      !currentTenant?.spec_layer_settings?.enabled
+    ) {
+      return false
+    }
     return true
   }
 

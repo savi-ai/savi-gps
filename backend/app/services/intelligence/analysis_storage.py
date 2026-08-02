@@ -193,6 +193,7 @@ def persist_analysis_artifacts(
     shell_succeeded: bool = False,
     repository_id: Optional[str] = None,
     mark_complete: bool = True,
+    extra_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """Write wiki JSON/HTML/MD and metadata to the analysis directory."""
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +223,8 @@ def persist_analysis_artifacts(
             "analysis_dir": str(analysis_dir),
         },
     }
+    if extra_meta:
+        meta.update(extra_meta)
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     if mark_complete:

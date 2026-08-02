@@ -25,12 +25,19 @@ export interface TenantCapabilities {
   portfolio: boolean
 }
 
+export interface SpecLayerSettings {
+  enabled: boolean
+  specs_folder: string
+  coding_agent: string
+}
+
 interface Tenant {
   id: string
   name: string
   description?: string
   capabilities?: TenantCapabilities
   onboarding_path?: string | null
+  spec_layer_settings?: SpecLayerSettings
 }
 
 interface AuthContextType {
@@ -259,6 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
       }
+      await refreshTenantConfig(tokenToVerify)
     } catch (error) {
       // Token invalid, clear storage
       localStorage.removeItem('auth_token')
@@ -325,6 +333,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         console.log('Tenant successfully loaded:', tenant)
       }
+      await refreshTenantConfig(access_token)
     } catch (error: any) {
       throw new Error(error.response?.data?.detail || 'Login failed')
     }
@@ -411,22 +420,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return Boolean(caps[capability])
   }
 
-  const refreshTenantConfig = async () => {
-    if (!token) return
+  const refreshTenantConfig = async (tokenOverride?: string) => {
+    const authToken = tokenOverride ?? token
+    if (!authToken) return
     try {
       const response = await axios.get(`${API_URL}/api/v1/tenant-config/me`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       const data = response.data
-      if (currentTenant) {
+      const layer = data.spec_layer_settings
+      const specLayer: SpecLayerSettings = {
+        enabled: Boolean(layer?.enabled),
+        specs_folder: layer?.specs_folder || '.github',
+        coding_agent: layer?.coding_agent || 'github_copilot',
+      }
+      setCurrentTenant((prev) => {
+        let base = prev
+        if (!base) {
+          try {
+            const stored = localStorage.getItem('current_tenant')
+            if (stored) base = JSON.parse(stored) as Tenant
+          } catch {
+            return prev
+          }
+        }
+        if (!base) return prev
         const updated: Tenant = {
-          ...currentTenant,
+          ...base,
           capabilities: mergeTenantCapabilities(data.capabilities),
           onboarding_path: data.onboarding_path ?? null,
+          spec_layer_settings: specLayer,
         }
-        setCurrentTenant(updated)
         localStorage.setItem('current_tenant', JSON.stringify(updated))
-      }
+        return updated
+      })
     } catch (error) {
       console.error('Error refreshing tenant config:', error)
     }

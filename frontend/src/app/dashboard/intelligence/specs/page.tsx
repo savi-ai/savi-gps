@@ -20,6 +20,13 @@ interface SpecRow {
   excerpt?: string
 }
 
+const AGENT_LABELS: Record<string, string> = {
+  kiro: 'Kiro',
+  github_copilot: 'GitHub Copilot',
+  cursor: 'Cursor',
+  claude_code: 'Claude Code',
+}
+
 export default function IntelligenceSpecsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -32,22 +39,42 @@ export default function IntelligenceSpecsPage() {
     wiki_pending_review?: number
     wiki_stale?: number
     spec_count?: number
+    has_specs?: boolean
     has_kiro_specs?: boolean
+    spec_layer?: {
+      enabled?: boolean
+      specs_folder?: string
+      coding_agent?: string
+    }
   } | null>(null)
+  const [specLayer, setSpecLayer] = useState<{
+    enabled: boolean
+    specs_folder: string
+    coding_agent: string
+  }>({ enabled: false, specs_folder: '.github', coding_agent: 'github_copilot' })
 
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const [specsRes, driftRes] = await Promise.all([
+      const [specsRes, driftRes, configRes] = await Promise.all([
         apiClient.get('/api/v1/intelligence/specs', {
           params: repoFilter ? { repository_id: repoFilter } : undefined,
         }),
         repoFilter
           ? apiClient.get(`/api/v1/intelligence/repos/${repoFilter}/specs/drift`).catch(() => ({ data: null }))
           : Promise.resolve({ data: null }),
+        apiClient.get('/api/v1/tenant-config/me').catch(() => ({ data: null })),
       ])
       setSpecs(specsRes.data?.specs || [])
       setDrift(driftRes.data)
+      const layer = configRes.data?.spec_layer_settings
+      if (layer) {
+        setSpecLayer({
+          enabled: Boolean(layer.enabled),
+          specs_folder: layer.specs_folder || '.github',
+          coding_agent: layer.coding_agent || 'github_copilot',
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -70,12 +97,29 @@ export default function IntelligenceSpecsPage() {
     return acc
   }, {})
 
+  const agentLabel = AGENT_LABELS[specLayer.coding_agent] || specLayer.coding_agent
+  const folder = drift?.spec_layer?.specs_folder || specLayer.specs_folder
+  const enabled = drift?.spec_layer?.enabled ?? specLayer.enabled
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Specs &amp; Drift</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Kiro-style specs discovered under <code className="text-xs">.kiro/specs/</code> during indexing.
+          {enabled ? (
+            <>
+              Specs for <span className="font-medium">{agentLabel}</span> under{' '}
+              <code className="text-xs">{folder}/</code> discovered during indexing.
+            </>
+          ) : (
+            <>
+              Specs scanning is off. Enable it under{' '}
+              <Link href="/dashboard/admin/tenant-settings" className="font-medium hover:underline">
+                Tenant settings
+              </Link>
+              .
+            </>
+          )}
           {repoFilter && (
             <>
               {' '}
@@ -129,11 +173,24 @@ export default function IntelligenceSpecsPage() {
             <div className="py-10 text-center">
               <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                No Kiro spec files found. Add <code>.kiro/specs/</code> to a repo and re-index.
+                {enabled ? (
+                  <>
+                    No spec files found under <code>{folder}/</code>. Add specs and re-index.
+                  </>
+                ) : (
+                  <>
+                    Specs scanning is disabled. Turn it on in Tenant settings, then re-index.
+                  </>
+                )}
               </p>
-              <Button className="mt-4" size="sm" variant="outline" asChild>
-                <Link href="/dashboard/intelligence/repositories">View repositories</Link>
-              </Button>
+              <div className="mt-4 flex justify-center gap-2">
+                <Button size="sm" variant="outline" asChild>
+                  <Link href="/dashboard/admin/tenant-settings">Tenant settings</Link>
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href="/dashboard/intelligence/repositories">View repositories</Link>
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
