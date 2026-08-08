@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.database import (
+    Application,
     ModernizationPlan,
     Project,
     Repository,
@@ -140,6 +141,43 @@ def spawn_build_project(
         if wiki_site and wiki_site.summary_json:
             wiki_json = wiki_site.summary_json
 
+    from app.services.build.project_application_service import resolve_application_for_spawn
+    from app.services.intelligence.application_service import ApplicationService
+
+    target_app = resolve_application_for_spawn(
+        db,
+        tenant_id=tenant_id,
+        plan_application_id=plan.source_application_id,
+        repository_id=repo.id,
+    )
+    if not target_app:
+        # Orphan repo: create inventory shell so the Project always targets an Application
+        try:
+            target_app = ApplicationService(db).create_application(
+                tenant_id,
+                name=repo.github_full_name or repo.name,
+                description=f"Auto-created for modernization of {repo.name}",
+                domain="Modernization",
+                created_by=user_id,
+                repository_ids=[repo.id],
+                origin="imported",
+            )
+        except ValueError:
+            # Name clash — attach under existing app with same name if possible
+            target_app = (
+                db.query(Application)
+                .filter(
+                    Application.tenant_id == tenant_id,
+                    Application.name == (repo.github_full_name or repo.name),
+                )
+                .first()
+            )
+            if target_app:
+                try:
+                    ApplicationService(db).add_repository(tenant_id, target_app.id, repo.id)
+                except ValueError:
+                    pass
+
     brief = _build_brief(plan, repo, wiki_json)
     page_titles = _page_titles(db, repo.id)
     overview = (wiki_json or {}).get("overview") or {}
@@ -161,7 +199,9 @@ def spawn_build_project(
         tenant_id=tenant_id,
         name=plan.title,
         pillar="modernize",
+        mode="enhance",
         source_plan_id=plan.id,
+        source_application_id=target_app.id if target_app else None,
         description=overview.get("description") or f"Modernization of {repo.name}",
         domain="Modernization",
         priority="high",
@@ -170,6 +210,10 @@ def spawn_build_project(
         current_step="idea",
     )
     db.add(project)
+
+    # If plan had no application but repo belongs to one, keep plan FK in sync for hub queries
+    if target_app and not plan.source_application_id:
+        plan.source_application_id = target_app.id
 
     link = RepositoryProjectLink(
         id=str(uuid.uuid4()),
@@ -192,7 +236,10 @@ def spawn_build_project(
             "id": project.id,
             "name": project.name,
             "pillar": project.pillar,
+            "mode": project.mode,
             "source_plan_id": project.source_plan_id,
+            "source_application_id": project.source_application_id,
+            "target_application_id": project.source_application_id,
             "current_step": project.current_step,
         },
         "repository_link": {

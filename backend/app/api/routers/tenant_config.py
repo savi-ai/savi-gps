@@ -34,11 +34,23 @@ class AssessmentSettingsUpdateRequest(BaseModel):
 
 
 class LlmSettingsUpdateRequest(BaseModel):
+    code_generation_provider: Optional[str] = Field(
+        None,
+        description="claude | github_copilot | empty to inherit (Build + Teammate fallback)",
+    )
     wiki_generation_mode: Optional[str] = Field(
         None, description="cli | api | auto | empty to inherit env"
     )
+    wiki_generation_provider: Optional[str] = Field(
+        None,
+        description=(
+            "claude | github_copilot | openai | bedrock | ollama | empty to inherit "
+            "(Copilot requires CLI/auto)"
+        ),
+    )
     llm_provider: Optional[str] = Field(
-        None, description="claude | openai | bedrock | ollama | empty to inherit"
+        None,
+        description="Other LLM calls: claude | openai | bedrock | ollama | empty to inherit",
     )
     llm_model: Optional[str] = Field(None, description="Model / Bedrock model ID")
     wiki_github_export_enabled: Optional[bool] = Field(

@@ -106,7 +106,10 @@ class Project(Base):
     feature_generation_status = Column(String, nullable=True)  # pending, started, completed, failed
     pillar = Column(String, nullable=False, default="build")  # build | modernize
     source_plan_id = Column(String, ForeignKey("modernization_plans.id"), nullable=True, index=True)
+    # Target Application for this delivery workstream (ADR 0006). Name kept for DB compat;
+    # API also exposes target_application_id as an alias.
     source_application_id = Column(String, ForeignKey("applications.id"), nullable=True, index=True)
+    mode = Column(String, nullable=True)  # greenfield | enhance | extend (ADR 0006)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -415,6 +418,8 @@ class Application(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     domain = Column(String, nullable=True)
+    # ADR 0006: imported | generated | hybrid
+    origin = Column(String, nullable=False, default="imported")
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -441,14 +446,233 @@ class ApplicationRepository(Base):
     repository = relationship("Repository", backref="application_membership")
 
 
+class Team(Base):
+    """Work + ACL + Savi roster boundary (ADR 0007)."""
+    __tablename__ = "teams"
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    slug = Column(String, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    # Reserved for Portfolio / Business Units (nullable until F1)
+    business_unit_id = Column(String, nullable=True, index=True)
+    is_default = Column(Boolean, default=False)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    tenant = relationship("Tenant", backref="teams")
+    members = relationship(
+        "TeamMember",
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+    application_links = relationship(
+        "TeamApplication",
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+
+
+class TeamMember(Base):
+    __tablename__ = "team_members"
+
+    id = Column(String, primary_key=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    # lead | member
+    role = Column(String, nullable=False, default="member")
+    created_at = Column(DateTime, default=datetime.now)
+
+    team = relationship("Team", back_populates="members")
+    user = relationship("User", backref="team_memberships")
+
+
+class TeamApplication(Base):
+    """Team owns or shares an Application for ACL / Savi scope."""
+    __tablename__ = "team_applications"
+
+    id = Column(String, primary_key=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    application_id = Column(String, ForeignKey("applications.id"), nullable=False, index=True)
+    # own | share
+    access = Column(String, nullable=False, default="own")
+    created_at = Column(DateTime, default=datetime.now)
+
+    team = relationship("Team", back_populates="application_links")
+    application = relationship("Application", backref="team_links")
+
+
+class SaviInstance(Base):
+    """Rostered Savi Teammate on a Team (ADR 0007 / Teammate plan T2 shell)."""
+    __tablename__ = "savi_instances"
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    slug = Column(String, nullable=False, index=True)
+    # pending | active | disabled
+    status = Column(String, nullable=False, default="pending")
+    # Optional link to GPS user used for audit attribution
+    machine_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    # T7: company-managed identity attached by admin (IdP service account / SP)
+    # entra | okta | google | github | custom | None
+    external_identity_provider = Column(String, nullable=True)
+    # UPN, email, object id, or SP client id — company source of truth
+    external_identity_subject = Column(String, nullable=True, index=True)
+    external_identity_display = Column(String, nullable=True)
+    external_identity_metadata = Column(JSON, nullable=True)
+    external_identity_linked_at = Column(DateTime, nullable=True)
+    external_identity_linked_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    tenant = relationship("Tenant", backref="savi_instances")
+    team = relationship("Team", backref="savi_instances")
+
+
+class SaviCodingAgentSeat(Base):
+    """Coding-agent seat binding for a Savi (T7 / ADR 0009). One active per Savi in V1."""
+    __tablename__ = "savi_coding_agent_seats"
+    __table_args__ = (
+        UniqueConstraint("savi_instance_id", name="uq_savi_coding_agent_seat"),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    savi_instance_id = Column(
+        String, ForeignKey("savi_instances.id"), nullable=False, index=True
+    )
+    # github_copilot | cursor | kiro | claude_code | custom
+    agent_type = Column(String, nullable=False)
+    # active | disabled | pending_license
+    status = Column(String, nullable=False, default="pending_license")
+    # Vendor seat id / licensed email / installation id (company-managed)
+    external_seat_ref = Column(String, nullable=True)
+    # heuristic | llm | cli | claude_cli | copilot_cli | kiro_cli | api | remote_runner
+    execution_mode = Column(String, nullable=False, default="cli")
+    config_json = Column(JSON, nullable=True)
+    secret_encrypted = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    tenant = relationship("Tenant", backref="savi_coding_agent_seats")
+    team = relationship("Team", backref="savi_coding_agent_seats")
+    savi_instance = relationship("SaviInstance", backref="coding_agent_seat")
+
+
+class SaviWorkItem(Base):
+    """Per-Savi work queue item (Teammate Phase T3). Never tenant-global."""
+    __tablename__ = "savi_work_items"
+    __table_args__ = (
+        Index("ix_savi_work_savi_state", "savi_instance_id", "state"),
+        Index("ix_savi_work_team_state", "team_id", "state"),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    savi_instance_id = Column(
+        String, ForeignKey("savi_instances.id"), nullable=False, index=True
+    )
+    application_id = Column(
+        String, ForeignKey("applications.id"), nullable=True, index=True
+    )
+
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    # manual | jira | slack
+    source = Column(String, nullable=False, default="manual")
+    external_ref = Column(String, nullable=True)
+
+    # inbox | needs_info | queued | in_progress | in_review | done | blocked | cancelled
+    state = Column(String, nullable=False, default="inbox", index=True)
+    # Lower number = higher priority. Null while awaiting_priority.
+    priority = Column(Integer, nullable=True)
+    awaiting_priority = Column(Boolean, default=False)
+
+    ready_questions = Column(JSON, nullable=True)  # [{id, prompt}]
+    clarification_answers = Column(JSON, nullable=True)  # {question_id: answer}
+    # Portal intake until T5 connectors: [{type, label?, value}] + extra_repository_ids stored here
+    context_refs = Column(JSON, nullable=True)
+    context_pack = Column(JSON, nullable=True)  # Assembled brief (T4)
+
+    # T5 connector linkage
+    pr_url = Column(String, nullable=True)
+    pr_number = Column(Integer, nullable=True)
+    pr_repository_id = Column(String, ForeignKey("repositories.id"), nullable=True)
+    connector_meta = Column(JSON, nullable=True)  # jira status, slack thread, check runs, …
+
+    # T6 orchestrator
+    # ready | ground | plan | code | test | pr | awaiting_approval | wait_feedback | done | failed
+    orchestrator_phase = Column(String, nullable=True, index=True)
+    orchestrator_timeline = Column(JSON, nullable=True)  # [{phase, at, detail, tokens, cost}]
+    orchestrator_tokens = Column(Integer, nullable=True, default=0)
+    orchestrator_error = Column(Text, nullable=True)
+    # ADR 0010 kill switch + approval binding
+    cancel_requested = Column(Boolean, default=False)
+    approval_base_sha = Column(String, nullable=True)
+    approval_diff_hash = Column(String, nullable=True)
+    approval_bound_at = Column(DateTime, nullable=True)
+
+    assigned_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    tenant = relationship("Tenant", backref="savi_work_items")
+    team = relationship("Team", backref="savi_work_items")
+    savi_instance = relationship("SaviInstance", backref="work_items")
+    application = relationship("Application", backref="savi_work_items")
+
+
+class SaviConnectorBinding(Base):
+    """Per-Savi connector credentials + external IDs (Teammate Phase T5)."""
+    __tablename__ = "savi_connector_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "savi_instance_id",
+            "connector_type",
+            name="uq_savi_connector_type",
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    team_id = Column(String, ForeignKey("teams.id"), nullable=False, index=True)
+    savi_instance_id = Column(
+        String, ForeignKey("savi_instances.id"), nullable=False, index=True
+    )
+    # github | jira | slack | confluence
+    connector_type = Column(String, nullable=False, index=True)
+    # active | disabled
+    status = Column(String, nullable=False, default="active")
+    # Non-secret config: github_credential_id, project_key, channel_id, base_url, webhook_secret, …
+    config_json = Column(JSON, nullable=True)
+    secret_encrypted = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    tenant = relationship("Tenant", backref="savi_connector_bindings")
+    team = relationship("Team", backref="savi_connector_bindings")
+    savi_instance = relationship("SaviInstance", backref="connector_bindings")
+
+
 class RepositoryProjectLink(Base):
-    """Links a repository to a modernization Build project"""
+    """Links a repository to a Build / Evolve project (context or modernization)."""
     __tablename__ = "repository_project_links"
 
     id = Column(String, primary_key=True)
     repository_id = Column(String, ForeignKey("repositories.id"), nullable=False, index=True)
     project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
-    link_type = Column(String, nullable=False, default="modernization")
+    link_type = Column(String, nullable=False, default="modernization")  # context | modernization
     created_at = Column(DateTime, default=datetime.now)
 
     repository = relationship("Repository", backref="project_links")
@@ -561,6 +785,7 @@ class WikiPage(Base):
     title = Column(String, nullable=False)
     template_type = Column(String, nullable=False, default="custom")
     content_md = Column(Text, nullable=False)
+    content_hash = Column(String, nullable=True, index=True)
     mermaid = Column(Text, nullable=True)
     state = Column(String, nullable=False, default="draft")  # draft | live
     version = Column(Integer, nullable=False, default=1)
@@ -1161,8 +1386,29 @@ def init_db():
                         ))
                         conn.commit()
                         logger.info("Added source_application_id column to projects table")
+                    if "mode" not in project_columns:
+                        conn.execute(text(
+                            "ALTER TABLE projects ADD COLUMN mode TEXT"
+                        ))
+                        conn.commit()
+                        logger.info("Added mode column to projects table")
                     conn.execute(text(
                         "UPDATE projects SET pillar = 'build' WHERE pillar IS NULL OR pillar = ''"
+                    ))
+                    conn.commit()
+
+                if inspector.has_table("applications"):
+                    result = conn.execute(text("PRAGMA table_info(applications)"))
+                    app_columns = [row[1] for row in result]
+                    if "origin" not in app_columns:
+                        conn.execute(text(
+                            "ALTER TABLE applications ADD COLUMN origin TEXT NOT NULL DEFAULT 'imported'"
+                        ))
+                        conn.commit()
+                        logger.info("Added origin column to applications table")
+                    conn.execute(text(
+                        "UPDATE applications SET origin = 'imported' "
+                        "WHERE origin IS NULL OR origin = ''"
                     ))
                     conn.commit()
 
@@ -1179,6 +1425,68 @@ def init_db():
                             ))
                             conn.commit()
                             logger.info(f"Added {col_name} column to modernization_plans table")
+
+                if inspector.has_table("savi_work_items"):
+                    result = conn.execute(text("PRAGMA table_info(savi_work_items)"))
+                    work_columns = [row[1] for row in result]
+                    if "context_refs" not in work_columns:
+                        conn.execute(text(
+                            "ALTER TABLE savi_work_items ADD COLUMN context_refs JSON"
+                        ))
+                        conn.commit()
+                        logger.info("Added context_refs column to savi_work_items table")
+                    for col_name, col_type in {
+                        "pr_url": "TEXT",
+                        "pr_number": "INTEGER",
+                        "pr_repository_id": "TEXT",
+                        "connector_meta": "JSON",
+                        "orchestrator_phase": "TEXT",
+                        "orchestrator_timeline": "JSON",
+                        "orchestrator_tokens": "INTEGER",
+                        "orchestrator_error": "TEXT",
+                        "cancel_requested": "BOOLEAN",
+                        "approval_base_sha": "TEXT",
+                        "approval_diff_hash": "TEXT",
+                        "approval_bound_at": "DATETIME",
+                    }.items():
+                        if col_name not in work_columns:
+                            conn.execute(text(
+                                f"ALTER TABLE savi_work_items ADD COLUMN {col_name} {col_type}"
+                            ))
+                            conn.commit()
+                            logger.info(
+                                f"Added {col_name} column to savi_work_items table"
+                            )
+
+                if inspector.has_table("wiki_pages"):
+                    result = conn.execute(text("PRAGMA table_info(wiki_pages)"))
+                    wiki_cols = [row[1] for row in result]
+                    if "content_hash" not in wiki_cols:
+                        conn.execute(text(
+                            "ALTER TABLE wiki_pages ADD COLUMN content_hash TEXT"
+                        ))
+                        conn.commit()
+                        logger.info("Added content_hash column to wiki_pages table")
+
+                if inspector.has_table("savi_instances"):
+                    result = conn.execute(text("PRAGMA table_info(savi_instances)"))
+                    savi_columns = [row[1] for row in result]
+                    for col_name, col_type in {
+                        "external_identity_provider": "TEXT",
+                        "external_identity_subject": "TEXT",
+                        "external_identity_display": "TEXT",
+                        "external_identity_metadata": "JSON",
+                        "external_identity_linked_at": "DATETIME",
+                        "external_identity_linked_by": "TEXT",
+                    }.items():
+                        if col_name not in savi_columns:
+                            conn.execute(text(
+                                f"ALTER TABLE savi_instances ADD COLUMN {col_name} {col_type}"
+                            ))
+                            conn.commit()
+                            logger.info(
+                                f"Added {col_name} column to savi_instances table"
+                            )
 
         except Exception as e:
             logger.warning(f"Could not migrate database: {e}")

@@ -1,0 +1,18 @@
+Write a short implementation plan in markdown for this ticket.
+
+## Title
+{{TITLE}}
+
+## Description
+{{DESCRIPTION}}
+
+## Context brief
+{{BRIEF}}
+
+## Constraints
+- Do not merge or deploy.
+- Propose a PR-sized change.
+- Be concise and actionable.
+- Ground the plan in the context brief when present.
+
+Output markdown only (no surrounding code fence).

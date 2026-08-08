@@ -117,7 +117,8 @@ ROLE_PERMISSIONS = {
         "can_view_all": True,
         "can_manage_policies": True,
         "can_manage_building_blocks": True,
-        "can_manage_users": True
+        "can_manage_users": True,
+        "can_manage_teams": True,
     }
 }
 

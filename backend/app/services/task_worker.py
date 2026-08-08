@@ -41,18 +41,26 @@ class TaskWorker:
             
             # Get task input
             input_data = task_service.get_task_input(task.id) or {}
-            
+
+            tenant_id = None
+            if task.project_id:
+                from app.core.database import Project
+
+                project = db.query(Project).filter(Project.id == task.project_id).first()
+                if project:
+                    tenant_id = project.tenant_id
+
             # Route to appropriate agent based on task type
             result = None
             
             if task.task_type == TaskType.GENERATE_FEATURES:
                 logger.info(f"Executing feature generation for task {task.id}")
-                agent = FeatureAgent()
+                agent = FeatureAgent(db=db, tenant_id=tenant_id, purpose="other")
                 result = await agent.process(input_data)
                 
             elif task.task_type == TaskType.GENERATE_STORIES:
                 logger.info(f"Executing story generation for task {task.id}")
-                agent = StoryAgent()
+                agent = StoryAgent(db=db, tenant_id=tenant_id, purpose="other")
                 result = await agent.process(input_data)
                 
                 # Validate stories against SOPs
@@ -103,7 +111,7 @@ class TaskWorker:
                 
             elif task.task_type == TaskType.GENERATE_ARCHITECTURE:
                 logger.info(f"Executing architecture generation for task {task.id}")
-                agent = ArchitectureAgent()
+                agent = ArchitectureAgent(db=db, tenant_id=tenant_id, purpose="other")
                 result = await agent.process(input_data)
                 
                 # Validate architecture against SOPs
@@ -154,7 +162,7 @@ class TaskWorker:
                 
             elif task.task_type == TaskType.GENERATE_CODE:
                 logger.info(f"Executing code generation for task {task.id}")
-                agent = DeveloperAgent()
+                agent = DeveloperAgent(db=db, tenant_id=tenant_id, purpose="code")
                 result = await agent.process(input_data)
                 
                 # Validate code against SOPs
@@ -224,6 +232,28 @@ class TaskWorker:
                             if git_result.get('success'):
                                 logger.info(f"Successfully pushed code to GitHub: {git_result.get('message')}")
                                 result['github_push'] = git_result
+                                try:
+                                    from app.services.build.project_repo_graduation_service import (
+                                        graduate_project_github_repo,
+                                    )
+
+                                    graduation = graduate_project_github_repo(
+                                        db,
+                                        project,
+                                        github_repo_url=input_data.get('github_repo_url'),
+                                        start_index=True,
+                                    )
+                                    result['graduation'] = graduation
+                                except Exception as grad_err:
+                                    logger.warning(
+                                        "Auto-push graduation failed for project %s: %s",
+                                        project.id,
+                                        grad_err,
+                                    )
+                                    result['graduation'] = {
+                                        'success': False,
+                                        'error': str(grad_err),
+                                    }
                             else:
                                 logger.warning(f"Failed to push code to GitHub: {git_result.get('error')}")
                                 result['github_push'] = git_result
@@ -237,7 +267,7 @@ class TaskWorker:
                 
             elif task.task_type == TaskType.GENERATE_TESTS:
                 logger.info(f"Executing test generation for task {task.id}")
-                agent = TestingAgent()
+                agent = TestingAgent(db=db, tenant_id=tenant_id, purpose="code")
                 result = await agent.process(input_data)
                 
                 # After successful test generation, push to GitHub if repo URL is configured

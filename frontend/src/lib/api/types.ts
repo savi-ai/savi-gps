@@ -11,6 +11,7 @@ export interface BuildProject {
   id: string
   name: string
   pillar?: string
+  mode?: string | null
   description?: string
   business_value?: string
   domain?: string
@@ -21,9 +22,12 @@ export interface BuildProject {
   conversation_history?: Array<{ role: string; content: string }>
   linked_repositories?: LinkedRepository[]
   source_application_id?: string | null
+  target_application_id?: string | null
   source_application?: { id: string; name: string } | null
+  target_application?: { id: string; name: string } | null
   source_plan_id?: string | null
   source_application_name?: string | null
+  target_application_name?: string | null
   vision?: string
   features?: unknown
   architecture?: unknown
@@ -42,6 +46,7 @@ export interface ApplicationSummary {
   name: string
   description?: string | null
   domain?: string | null
+  origin?: string | null
   repository_count: number
 }
 

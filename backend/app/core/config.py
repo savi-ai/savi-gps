@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 3
     # Wiki generation: cli | api | auto (CLI then API then heuristic)
     WIKI_GENERATION_MODE: str = "auto"
+    # Max seconds for wiki_agent.sh (Claude/Copilot CLI). Default 1 hour.
+    WIKI_CLI_TIMEOUT_SECONDS: int = 3600
     # Incremental wiki: compare last stored git_head to clone HEAD
     WIKI_INCREMENTAL_ENABLED: bool = True
     WIKI_INCREMENTAL_MAX_FILES: int = 40
@@ -68,6 +70,8 @@ class Settings(BaseSettings):
     FLEET_ENABLED: bool = False
     PORTFOLIO_ENABLED: Optional[bool] = None
     MODERNIZE_ENABLED: Optional[bool] = None
+    # ADR 0007: when true, Application/Project mutations require Team membership
+    TEAM_ACL_ENFORCED: bool = False
 
     # Legacy SQLite boot-time ALTER migrations (disable once Alembic-only path is verified)
     USE_LEGACY_SQLITE_MIGRATIONS: bool = True
@@ -102,7 +106,15 @@ class Settings(BaseSettings):
     CONFLUENCE_ENABLED: bool = False
     GITHUB_ENABLED: bool = False
     HARNESS_ENABLED: bool = False
+    SLACK_ENABLED: bool = False
     GITHUB_TOKEN: Optional[str] = None
+    # Optional shared webhook verification (per-binding secret preferred)
+    SAVI_WEBHOOK_SHARED_SECRET: Optional[str] = None
+    # T6/B2: orchestrator jobs
+    SAVI_ORCHESTRATOR_INLINE: bool = True
+    SAVI_USE_ARQ: bool = False
+    REDIS_URL: Optional[str] = "redis://localhost:6379"
+    SAVI_CODING_AGENT: str = "llm"  # llm | heuristic | claude_cli | copilot_cli | kiro_cli
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -111,7 +123,15 @@ class Settings(BaseSettings):
             return value
         return str(value).lower() in {"1", "true", "yes", "on"}
 
-    @field_validator("INTELLIGENCE_ENABLED", "FLEET_ENABLED", "USE_LEGACY_SQLITE_MIGRATIONS", mode="before")
+    @field_validator(
+        "INTELLIGENCE_ENABLED",
+        "FLEET_ENABLED",
+        "USE_LEGACY_SQLITE_MIGRATIONS",
+        "TEAM_ACL_ENFORCED",
+        "SAVI_ORCHESTRATOR_INLINE",
+        "SAVI_USE_ARQ",
+        mode="before",
+    )
     @classmethod
     def parse_bool_flags(cls, value):
         if isinstance(value, bool):

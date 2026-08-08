@@ -34,6 +34,12 @@ class IndexerService:
         self.db.commit()
         self.db.refresh(run)
         logger.info(f"Index run {run.id} queued for repository {repository.id}")
+
+        from app.services.savi_job_queue import arq_enabled, schedule_index_run
+
+        if arq_enabled():
+            schedule_index_run(run.id)
+
         return run
 
     def get_latest_run(self, repository_id: str) -> Optional[IndexRun]:
@@ -54,13 +60,17 @@ class IndexerService:
         )
 
     def _resolve_clone_token(self, repository: Repository) -> Optional[str]:
-        if not repository.github_credential_id:
-            return None
-        cred_svc = GitHubCredentialService(self.db)
-        cred = cred_svc.get_credential(repository.tenant_id, repository.github_credential_id)
-        if not cred:
-            return None
-        return cred_svc.get_token(cred)
+        if repository.github_credential_id:
+            cred_svc = GitHubCredentialService(self.db)
+            cred = cred_svc.get_credential(repository.tenant_id, repository.github_credential_id)
+            if cred:
+                token = cred_svc.get_token(cred)
+                if token:
+                    return token
+        # Fallback for Build-graduated repos that used env GITHUB_TOKEN for push
+        import os
+
+        return os.getenv("GITHUB_TOKEN") or None
 
     async def execute_index_run(self, run: IndexRun) -> None:
         repository = self.db.query(Repository).filter(Repository.id == run.repository_id).first()

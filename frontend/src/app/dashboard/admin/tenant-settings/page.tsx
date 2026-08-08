@@ -57,7 +57,9 @@ export default function TenantSettingsPage() {
     auto_assess_on_application_analysis: false,
   })
   const [llmSettings, setLlmSettings] = useState({
+    code_generation_provider: '' as string,
     wiki_generation_mode: '' as string,
+    wiki_generation_provider: '' as string,
     llm_provider: '' as string,
     llm_model: '' as string,
     wiki_github_export_enabled: false,
@@ -71,6 +73,7 @@ export default function TenantSettingsPage() {
   const [llmStatus, setLlmStatus] = useState<{
     wiki_generation_mode_default?: string
     llm_provider_default?: string
+    code_generation_default?: string
     bedrock_model_id?: string
     bedrock_region?: string
     credentials?: Record<string, boolean>
@@ -107,7 +110,9 @@ export default function TenantSettingsPage() {
         ...res.data.assessment_settings,
       })
       setLlmSettings({
+        code_generation_provider: res.data.llm_settings?.code_generation_provider || '',
         wiki_generation_mode: res.data.llm_settings?.wiki_generation_mode || '',
+        wiki_generation_provider: res.data.llm_settings?.wiki_generation_provider || '',
         llm_provider: res.data.llm_settings?.llm_provider || '',
         llm_model: res.data.llm_settings?.llm_model || '',
         wiki_github_export_enabled: Boolean(
@@ -167,19 +172,25 @@ export default function TenantSettingsPage() {
     setMessage(null)
     try {
       await apiClient.patch('/api/v1/tenant-config/llm-settings', {
+        code_generation_provider: llmSettings.code_generation_provider || null,
         wiki_generation_mode: llmSettings.wiki_generation_mode || null,
+        wiki_generation_provider: llmSettings.wiki_generation_provider || null,
         llm_provider: llmSettings.llm_provider || null,
         llm_model: llmSettings.llm_model || null,
         wiki_github_export_enabled: llmSettings.wiki_github_export_enabled,
       })
       await loadConfig()
-      setMessage('Wiki / LLM settings saved (API keys stay in server .env).')
+      setMessage('LLM settings saved (API keys stay in server .env).')
     } catch (err: unknown) {
       setError(extractError(err))
     } finally {
       setSaving(false)
     }
   }
+
+  const wikiCopilotNeedsCli =
+    llmSettings.wiki_generation_provider === 'github_copilot' &&
+    llmSettings.wiki_generation_mode === 'api'
 
   const saveSpecLayerSettings = async () => {
     setSaving(true)
@@ -318,10 +329,57 @@ export default function TenantSettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Wiki generation & LLM</CardTitle>
+          <CardTitle className="text-base">Code generation</CardTitle>
           <CardDescription>
-            Choose how wiki/analysis is generated. Secrets (Anthropic, OpenAI, AWS) stay in the
-            server environment — never stored in the database.
+            Build Developer/Testing agents and Savi Teammate when no active coding-agent seat.
+            Per-Savi seats still override this when status is active.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Provider</label>
+            <select
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              value={llmSettings.code_generation_provider}
+              onChange={(e) =>
+                setLlmSettings((s) => ({ ...s, code_generation_provider: e.target.value }))
+              }
+              disabled={loading}
+            >
+              <option value="">
+                Inherit server ({llmStatus?.code_generation_default || 'heuristic'})
+              </option>
+              <option value="claude">Claude Code (claude CLI)</option>
+              <option value="github_copilot">GitHub Copilot (copilot CLI)</option>
+            </select>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <Badge
+              variant={llmStatus?.credentials?.claude_cli_on_path ? 'secondary' : 'outline'}
+            >
+              claude CLI {llmStatus?.credentials?.claude_cli_on_path ? 'on PATH' : 'missing'}
+            </Badge>
+            <Badge
+              variant={llmStatus?.credentials?.copilot_cli_on_path ? 'secondary' : 'outline'}
+            >
+              copilot CLI {llmStatus?.credentials?.copilot_cli_on_path ? 'on PATH' : 'missing'}
+            </Badge>
+            <Badge
+              variant={llmStatus?.credentials?.copilot_github_token ? 'secondary' : 'outline'}
+            >
+              Copilot/GitHub token{' '}
+              {llmStatus?.credentials?.copilot_github_token ? 'set' : 'unset'}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Wiki generation</CardTitle>
+          <CardDescription>
+            How repository wikis are produced. GitHub Copilot uses the CLI path only
+            (wiki_agent.sh with AGENT_CLI=copilot). Secrets stay in the server environment.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -332,7 +390,14 @@ export default function TenantSettingsPage() {
                 className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                 value={llmSettings.wiki_generation_mode}
                 onChange={(e) =>
-                  setLlmSettings((s) => ({ ...s, wiki_generation_mode: e.target.value }))
+                  setLlmSettings((s) => {
+                    const mode = e.target.value
+                    const next = { ...s, wiki_generation_mode: mode }
+                    if (mode === 'api' && s.wiki_generation_provider === 'github_copilot') {
+                      next.wiki_generation_provider = 'claude'
+                    }
+                    return next
+                  })
                 }
                 disabled={loading}
               >
@@ -340,59 +405,48 @@ export default function TenantSettingsPage() {
                   Inherit server ({llmStatus?.wiki_generation_mode_default || 'auto'})
                 </option>
                 <option value="auto">Auto (CLI then API)</option>
-                <option value="api">API only (Claude / OpenAI / Bedrock)</option>
+                <option value="api">API only</option>
                 <option value="cli">CLI only (wiki_agent.sh)</option>
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">LLM provider</label>
+              <label className="mb-1 block text-xs text-muted-foreground">Provider</label>
               <select
                 className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                value={llmSettings.llm_provider}
-                onChange={(e) => setLlmSettings((s) => ({ ...s, llm_provider: e.target.value }))}
+                value={llmSettings.wiki_generation_provider}
+                onChange={(e) =>
+                  setLlmSettings((s) => ({
+                    ...s,
+                    wiki_generation_provider: e.target.value,
+                    ...(e.target.value === 'github_copilot' && s.wiki_generation_mode === 'api'
+                      ? { wiki_generation_mode: 'cli' }
+                      : {}),
+                  }))
+                }
                 disabled={loading}
               >
                 <option value="">
                   Inherit server ({llmStatus?.llm_provider_default || 'claude'})
                 </option>
                 <option value="claude">Anthropic Claude</option>
+                <option value="github_copilot">GitHub Copilot (CLI)</option>
                 <option value="openai">OpenAI</option>
                 <option value="bedrock">AWS Bedrock</option>
                 <option value="ollama">Ollama (local)</option>
               </select>
             </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              Model ID (required for Bedrock; optional override otherwise)
-            </label>
-            <input
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              placeholder={
-                llmStatus?.bedrock_model_id ||
-                'e.g. us.anthropic.claude-sonnet-4-5 or anthropic.claude-…'
-              }
-              value={llmSettings.llm_model}
-              onChange={(e) => setLlmSettings((s) => ({ ...s, llm_model: e.target.value }))}
-              disabled={loading}
-            />
-          </div>
-          {llmStatus && (
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <Badge variant="outline">Region {llmStatus.bedrock_region || '—'}</Badge>
-              <Badge variant={llmStatus.credentials?.anthropic ? 'secondary' : 'outline'}>
-                Anthropic {llmStatus.credentials?.anthropic ? 'configured' : 'missing'}
-              </Badge>
-              <Badge variant={llmStatus.credentials?.openai ? 'secondary' : 'outline'}>
-                OpenAI {llmStatus.credentials?.openai ? 'configured' : 'missing'}
-              </Badge>
-              <Badge
-                variant={llmStatus.credentials?.bedrock_model_configured ? 'secondary' : 'outline'}
-              >
-                Bedrock model{' '}
-                {llmStatus.credentials?.bedrock_model_configured ? 'set' : 'unset'}
-              </Badge>
-            </div>
+          {wikiCopilotNeedsCli && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Copilot wiki generation requires CLI (or auto). Switch mode away from API before
+              saving.
+            </p>
+          )}
+          {llmSettings.wiki_generation_provider === 'github_copilot' && (
+            <p className="text-xs text-muted-foreground">
+              Copilot wiki uses the CLI only — authenticate the copilot CLI on the server; no
+              Anthropic key required for this path.
+            </p>
           )}
           <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
             <input
@@ -418,9 +472,76 @@ export default function TenantSettingsPage() {
               </span>
             </span>
           </label>
-          <Button onClick={saveLlmSettings} disabled={saving || loading}>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Other LLM calls</CardTitle>
+          <CardDescription>
+            Wiki chat/search, Idea / Feature / Architecture agents, and other API LLM clients.
+            Secrets (Anthropic, OpenAI, AWS) stay in the server environment — never stored in the
+            database.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">LLM provider</label>
+              <select
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={llmSettings.llm_provider}
+                onChange={(e) => setLlmSettings((s) => ({ ...s, llm_provider: e.target.value }))}
+                disabled={loading}
+              >
+                <option value="">
+                  Inherit server ({llmStatus?.llm_provider_default || 'claude'})
+                </option>
+                <option value="claude">Anthropic Claude</option>
+                <option value="openai">OpenAI</option>
+                <option value="bedrock">AWS Bedrock</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Model ID (required for Bedrock; optional override otherwise)
+              </label>
+              <input
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                placeholder={
+                  llmStatus?.bedrock_model_id ||
+                  'e.g. us.anthropic.claude-sonnet-4-5 or anthropic.claude-…'
+                }
+                value={llmSettings.llm_model}
+                onChange={(e) => setLlmSettings((s) => ({ ...s, llm_model: e.target.value }))}
+                disabled={loading}
+              />
+            </div>
+          </div>
+          {llmStatus && (
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">Region {llmStatus.bedrock_region || '—'}</Badge>
+              <Badge variant={llmStatus.credentials?.anthropic ? 'secondary' : 'outline'}>
+                Anthropic {llmStatus.credentials?.anthropic ? 'configured' : 'missing'}
+              </Badge>
+              <Badge variant={llmStatus.credentials?.openai ? 'secondary' : 'outline'}>
+                OpenAI {llmStatus.credentials?.openai ? 'configured' : 'missing'}
+              </Badge>
+              <Badge
+                variant={llmStatus.credentials?.bedrock_model_configured ? 'secondary' : 'outline'}
+              >
+                Bedrock model{' '}
+                {llmStatus.credentials?.bedrock_model_configured ? 'set' : 'unset'}
+              </Badge>
+            </div>
+          )}
+          <Button
+            onClick={saveLlmSettings}
+            disabled={saving || loading || wikiCopilotNeedsCli}
+          >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save wiki / LLM settings
+            Save LLM settings
           </Button>
         </CardContent>
       </Card>

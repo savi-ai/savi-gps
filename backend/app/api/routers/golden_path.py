@@ -85,6 +85,8 @@ class ProjectCreateRequest(BaseModel):
     pillar: Optional[str] = "build"  # build | modernize
     repository_ids: Optional[List[str]] = None
     application_id: Optional[str] = None
+    target_application_id: Optional[str] = None  # alias of application_id (ADR 0006)
+    mode: Optional[str] = None  # greenfield | enhance | extend
 
 
 class ProjectResponse(BaseModel):
@@ -92,9 +94,12 @@ class ProjectResponse(BaseModel):
     name: str
     current_step: str
     pillar: str = "build"
+    mode: Optional[str] = None
     source_plan_id: Optional[str] = None
     source_application_id: Optional[str] = None
     source_application_name: Optional[str] = None
+    target_application_id: Optional[str] = None
+    target_application_name: Optional[str] = None
     default_execution_mode: Optional[str] = "copilot"
     created_at: str
     updated_at: str
@@ -631,11 +636,47 @@ async def create_project(
         if pillar not in ("build", "modernize"):
             raise HTTPException(status_code=400, detail="pillar must be 'build' or 'modernize'")
 
+        from app.services.build.project_application_service import (
+            ensure_target_application,
+            maybe_mark_hybrid_after_link,
+            normalize_mode,
+            project_target_payload,
+            resolve_target_application_id,
+        )
+
+        requested_app_id = resolve_target_application_id(
+            application_id=request.application_id,
+            target_application_id=request.target_application_id,
+        )
+        # Default mode: greenfield when no target app; enhance when app provided
+        try:
+            mode = normalize_mode(
+                request.mode,
+                default="enhance" if requested_app_id else "greenfield",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        try:
+            target_app = ensure_target_application(
+                db,
+                tenant_id=user.tenant_id,
+                user_id=user.id,
+                mode=mode,
+                project_name=request.name,
+                project_description=request.description,
+                project_domain=request.domain,
+                application_id=requested_app_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         project = Project(
             id=str(uuid.uuid4()),
             tenant_id=user.tenant_id,
             name=request.name,
             pillar=pillar,
+            mode=mode,
             description=request.description,
             business_value=request.business_value,
             domain=request.domain,
@@ -644,25 +685,20 @@ async def create_project(
             default_execution_mode=request.default_execution_mode or "copilot",
             conversation_history=json.dumps([]),  # Store as JSON string for SQLite
             current_step="idea",
-            source_application_id=request.application_id,
+            source_application_id=target_app.id,
         )
         db.add(project)
         db.flush()
 
         from app.services.build.project_repository_resolver import resolve_project_repository_ids
 
-        if request.application_id:
-            from app.services.intelligence.application_service import ApplicationService
-
-            if not ApplicationService(db).get_application(user.tenant_id, request.application_id):
-                db.rollback()
-                raise HTTPException(status_code=400, detail="Application not found")
-
+        # Greenfield: only explicitly selected repos (usually none).
+        # Enhance/extend: merge application members + explicit picks.
         repo_ids_to_link = resolve_project_repository_ids(
             db,
             user.tenant_id,
             repository_ids=request.repository_ids,
-            application_id=request.application_id,
+            application_id=None if mode == "greenfield" else target_app.id,
         )
 
         if repo_ids_to_link:
@@ -680,35 +716,26 @@ async def create_project(
                 db.rollback()
                 raise HTTPException(status_code=400, detail=str(e))
 
+        maybe_mark_hybrid_after_link(
+            target_app, mode=mode, linked_repo_count=len(repo_ids_to_link or [])
+        )
+
         db.commit()
         db.refresh(project)
 
-        source_application_name = None
-        if project.source_application_id:
-            from app.core.database import Application
+        target_fields = project_target_payload(project, target_app.name)
 
-            app_row = (
-                db.query(Application)
-                .filter(
-                    Application.id == project.source_application_id,
-                    Application.tenant_id == user.tenant_id,
-                )
-                .first()
-            )
-            if app_row:
-                source_application_name = app_row.name
-        
         return ProjectResponse(
             id=project.id,
             name=project.name,
             current_step=project.current_step,
             pillar=project.pillar or "build",
+            mode=project.mode,
             source_plan_id=project.source_plan_id,
-            source_application_id=project.source_application_id,
-            source_application_name=source_application_name,
             default_execution_mode=project.default_execution_mode,
             created_at=project.created_at.isoformat() if project.created_at else "",
-            updated_at=project.updated_at.isoformat() if project.updated_at else ""
+            updated_at=project.updated_at.isoformat() if project.updated_at else "",
+            **target_fields,
         )
     except HTTPException:
         raise
@@ -769,9 +796,14 @@ async def list_projects(
                 "id": p.id,
                 "name": p.name,
                 "pillar": p.pillar or "build",
+                "mode": getattr(p, "mode", None),
                 "source_plan_id": p.source_plan_id,
                 "source_application_id": p.source_application_id,
+                "target_application_id": p.source_application_id,
                 "source_application_name": app_names.get(p.source_application_id)
+                if p.source_application_id
+                else None,
+                "target_application_name": app_names.get(p.source_application_id)
                 if p.source_application_id
                 else None,
                 "current_step": p.current_step or "idea",
@@ -837,9 +869,14 @@ async def get_project(
             "id": project.id,
             "name": project.name,
             "pillar": project.pillar or "build",
+            "mode": getattr(project, "mode", None),
             "source_plan_id": project.source_plan_id,
             "source_application_id": project.source_application_id,
+            "target_application_id": project.source_application_id,
             "source_application": source_application,
+            "target_application": source_application,
+            "source_application_name": source_application["name"] if source_application else None,
+            "target_application_name": source_application["name"] if source_application else None,
             "description": project.description,
             "business_value": project.business_value,
             "domain": project.domain,
@@ -972,7 +1009,10 @@ async def idea_chat(
         messages.append({"role": "user", "content": request.message})
         
         # Use chat method for conversational response
-        response_text = await idea_agent.llm_client.chat(messages)
+        from app.services.llm_routing import get_other_llm_client
+
+        llm = get_other_llm_client(db, project.tenant_id)
+        response_text = await llm.chat(messages)
         
         # Check if LLM response indicates readiness to proceed
         # Look for keywords that suggest the idea is refined and ready
@@ -1661,7 +1701,7 @@ async def update_github_repo(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update GitHub repository URL for a project"""
+    """Update GitHub repository URL for a project and graduate into Intelligence inventory."""
     try:
         project = db.query(Project).filter(
             Project.id == project_id,
@@ -1682,13 +1722,32 @@ async def update_github_repo(
         
         project.github_repo_url = github_repo_url
         db.commit()
+
+        graduation = None
+        if github_repo_url:
+            from app.services.build.project_repo_graduation_service import (
+                graduate_project_github_repo,
+            )
+
+            try:
+                # Register + attach now; indexing waits until code is pushed
+                graduation = graduate_project_github_repo(
+                    db,
+                    project,
+                    github_repo_url=github_repo_url,
+                    created_by=user.id,
+                    start_index=False,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         
         logger.info(f"Updated GitHub repo URL for project {project.id}: {github_repo_url}")
         
         return {
             "success": True,
             "message": "GitHub repository URL updated successfully",
-            "github_repo_url": github_repo_url
+            "github_repo_url": (graduation or {}).get("github_repo_url") or github_repo_url,
+            "graduation": graduation,
         }
     except HTTPException:
         raise
@@ -1704,7 +1763,7 @@ async def push_to_github(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Manually trigger push of generated code to GitHub"""
+    """Manually trigger push of generated code to GitHub and graduate into Intelligence."""
     try:
         from app.services.git_service import get_git_service
         
@@ -1738,6 +1797,25 @@ async def push_to_github(
         
         if result.get('success'):
             logger.info(f"Successfully pushed code to GitHub for project {project.id}")
+            graduation = None
+            try:
+                from app.services.build.project_repo_graduation_service import (
+                    graduate_project_github_repo,
+                )
+
+                graduation = graduate_project_github_repo(
+                    db,
+                    project,
+                    created_by=user.id,
+                    start_index=True,
+                )
+            except Exception as grad_err:
+                logger.warning(
+                    "Push succeeded but graduation/index failed for project %s: %s",
+                    project.id,
+                    grad_err,
+                )
+            result = {**result, "graduation": graduation}
             return result
         else:
             logger.error(f"Failed to push code to GitHub: {result.get('error')}")

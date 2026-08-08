@@ -652,6 +652,7 @@ async def create_application(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_service import ApplicationService
+    from app.services.team_service import TeamService
 
     try:
         app = ApplicationService(db).create_application(
@@ -664,6 +665,13 @@ async def create_application(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Attach to Default team (and user's teams if any — Default is enough for Alpha)
+    try:
+        team_svc = TeamService(db)
+        default = team_svc.ensure_default_team(user.tenant_id, created_by=user.id)
+        team_svc.attach_application(user.tenant_id, default.id, app.id, access="own")
+    except Exception:
+        pass
     return ApplicationService(db).to_detail_dict(app)
 
 
@@ -700,7 +708,9 @@ async def update_application(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_service import ApplicationService
+    from app.services.team_acl import require_application_modify
 
+    require_application_modify(db, user, application_id)
     try:
         app = ApplicationService(db).update_application(
             user.tenant_id,
@@ -722,7 +732,9 @@ async def delete_application(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_service import ApplicationService
+    from app.services.team_acl import require_application_modify
 
+    require_application_modify(db, user, application_id)
     try:
         ApplicationService(db).delete_application(user.tenant_id, application_id)
     except ValueError as e:
@@ -739,7 +751,9 @@ async def add_repository_to_application(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_service import ApplicationService
+    from app.services.team_acl import require_application_modify
 
+    require_application_modify(db, user, application_id)
     try:
         ApplicationService(db).add_repository(
             user.tenant_id,
@@ -762,7 +776,9 @@ async def remove_repository_from_application(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_service import ApplicationService
+    from app.services.team_acl import require_application_modify
 
+    require_application_modify(db, user, application_id)
     try:
         ApplicationService(db).remove_repository(
             user.tenant_id, application_id, repository_id

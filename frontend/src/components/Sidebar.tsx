@@ -23,6 +23,7 @@ import {
   ClipboardCheck,
   Settings2,
   LogOut,
+  Users,
   Rocket,
 } from 'lucide-react'
 
@@ -153,6 +154,14 @@ const NAV_GROUPS: NavGroup[] = [
         path: '/dashboard/admin/wiki-review',
         permission: 'can_approve_wiki',
         roles: ['admin', 'architect'],
+      },
+      {
+        id: 'admin-teams',
+        label: 'Teams',
+        icon: Users,
+        path: '/dashboard/admin/teams',
+        permission: 'can_manage_tenant_config',
+        roles: ['admin'],
       },
       {
         id: 'admin-analysis-config',

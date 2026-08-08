@@ -1,0 +1,68 @@
+Analyze this repository at: {{CLONE_PATH}}
+
+Organization: {{ORG_NAME}}
+Repository: {{REPO_NAME}}
+Output directory (write ALL artifacts here): {{OUTPUT_DIR}}
+HTML style reference: {{SAMPLE_HTML}}
+Alternate template reference: {{TEMPLATE_PATH}}
+
+{{DEEP_RULES}}
+
+{{CONFIG_BLOCK}}
+
+Additional JSON schema for {{WIKI_JSON}}:
+{
+  "repo_name": "string",
+  "overview": { "description": "string", "loc": number, "file_count": number },
+  "functionality": { "summary": "string", "bullets": ["string"] },
+  "tech_stack": [{ "layer": "string", "technologies": ["string"], "evidence_file": "string" }],
+  "business_logic_layer": {
+    "summary": "string",
+    "components": [{
+      "name": "string",
+      "purpose": "string",
+      "source_files": ["string"],
+      "workflows": [{ "operation": "string", "steps": ["string"] }],
+      "business_rules": [{ "rule": "string", "evidence_file": "string" }]
+    }]
+  },
+  "analysis_attributes": [{ "key": "string", "label": "string", "value": "string", "source_file": "string", "confidence": "high|medium|low" }],
+  "diagrams": {
+    "high_level_mermaid": "flowchart or graph TD ...",
+    "low_level_mermaid": "graph TD ...",
+    "data_model_mermaid": "erDiagram ...",
+    "request_flow_mermaid": "flowchart LR ...",
+    "e2e_flow_mermaid": "sequenceDiagram ...",
+    "deployment_flow_mermaid": "flowchart TD ..."
+  },
+  "api_surface": [{ "method": "string", "path": "string", "file": "string", "description": "string" }],
+  "data_flow": { "summary": "string", "diagram_mermaid": "string" },
+  "database": { "summary": "string", "entities": ["string"] },
+  "build_deploy": { "summary": "string", "artifacts": ["string"] },
+  "run_locally": { "intro": "string", "prerequisites": ["string"], "commands": "string" },
+  "observability": { "summary": "string" },
+  "sections_md": {
+    "overview": "markdown",
+    "architecture": "markdown",
+    "business_logic": "markdown",
+    "api_surface": "markdown",
+    "data_flow": "markdown",
+    "e2e_flow": "markdown",
+    "database": "markdown",
+    "build_deploy": "markdown"
+  }
+}
+
+REQUIRED output files:
+1. {{WIKI_HTML}} — complete HTML wiki similar to {{SAMPLE_HTML}} (left TOC, Mermaid, Business Logic Layer section)
+2. {{WIKI_MD}} — same wiki content as Markdown
+3. {{WIKI_JSON}} — structured data per schema above
+
+Process:
+1. Read implementation files under {{CLONE_PATH}} using Read, Grep, Bash — do NOT modify source.
+2. Write all three files to {{OUTPUT_DIR}} only.
+3. On success, write an ISO-8601 UTC timestamp to {{OUTPUT_DIR}}/WIKI_COMPLETED (you may overwrite WIKI_STARTED).
+
+Constraints:
+- Do not hallucinate — omit or mark "Not detected" when evidence is missing.
+- Prefer *Impl*, *Service*, *Manager*, *Handler* files for business logic depth.

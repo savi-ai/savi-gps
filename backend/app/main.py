@@ -6,7 +6,7 @@ import uvicorn
 from app.core.config import settings
 from app.core.logger import logger
 from app.core.database import init_db
-from app.api.routers import sops, golden_path, integrations, health, auth, policies, tasks, notifications, intelligence, tenant_config, github_intelligence, wiki, analysis_config, portfolio, modernize
+from app.api.routers import sops, golden_path, integrations, health, auth, policies, tasks, notifications, intelligence, tenant_config, github_intelligence, wiki, analysis_config, portfolio, modernize, teams, savi_connectors
 from app.core.auth import create_default_roles
 from app.core.database import SessionLocal
 
@@ -31,25 +31,45 @@ async def lifespan(app: FastAPI):
         policy_loader = PolicyLoaderService(db)
         policies = policy_loader.load_default_policies(tenant_id=None)
         logger.info(f"Loaded {len(policies)} default policies")
+
+        # ADR 0007: ensure Default team per tenant + attach orphan apps
+        from app.core.database import Tenant
+        from app.services.team_service import TeamService
+
+        team_svc = TeamService(db)
+        for tenant in db.query(Tenant).filter(Tenant.is_active == True).all():  # noqa: E712
+            team_svc.ensure_default_team(tenant.id)
+        logger.info("Default teams ensured for active tenants")
     finally:
         db.close()
     
-    # Start background task worker
+    # Start background workers (in-process) unless Arq owns long-running jobs
+    from app.services.savi_job_queue import arq_enabled
     from app.services.task_worker import start_worker, stop_worker
     from app.services.intelligence.index_worker import start_index_worker, stop_index_worker
-    await start_worker()
-    logger.info("Task worker started")
-    await start_index_worker()
-    logger.info("Intelligence index worker started")
+
+    if arq_enabled():
+        logger.info(
+            "SAVI_USE_ARQ=true — skipping in-process task/index workers; "
+            "run: make savi-arq-worker (index, Build tasks, Teammate)"
+        )
+    else:
+        await start_worker()
+        logger.info("Task worker started (in-process)")
+        await start_index_worker()
+        logger.info("Intelligence index worker started (in-process)")
     
     yield
     
     # Stop background task worker
     logger.info("Shutting down Savi GPS...")
-    await stop_index_worker()
-    logger.info("Intelligence index worker stopped")
-    await stop_worker()
-    logger.info("Task worker stopped")
+    if not arq_enabled():
+        await stop_index_worker()
+        logger.info("Intelligence index worker stopped")
+        await stop_worker()
+        logger.info("Task worker stopped")
+    else:
+        logger.info("Arq mode — no in-process workers to stop")
 
 # Create FastAPI app
 app = FastAPI(
@@ -84,6 +104,8 @@ app.include_router(analysis_config.router, prefix=settings.API_V1_PREFIX)
 app.include_router(tenant_config.router, prefix=settings.API_V1_PREFIX)
 app.include_router(portfolio.router, prefix=settings.API_V1_PREFIX)
 app.include_router(modernize.router, prefix=settings.API_V1_PREFIX)
+app.include_router(teams.router, prefix=settings.API_V1_PREFIX)
+app.include_router(savi_connectors.router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/")
 async def root():

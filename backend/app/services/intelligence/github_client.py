@@ -270,6 +270,36 @@ class GitHubClient:
             raise
         return None
 
+    async def find_open_pull_request_by_head(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        head: str,
+        base: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return an open PR for head branch if one exists (create-PR-by-head)."""
+        # head may be "owner:branch" for forks; for same-repo use branch name
+        head_param = head if ":" in head else f"{owner}:{head}"
+        params: Dict[str, Any] = {"state": "open", "head": head_param}
+        if base:
+            params["base"] = base
+        try:
+            data = await self._request(
+                "GET",
+                f"/repos/{owner}/{repo}/pulls",
+                params=params,
+            )
+        except GitHubApiError as e:
+            if e.status == 404:
+                return None
+            raise
+        if isinstance(data, list) and data:
+            existing = dict(data[0])
+            existing["_reused"] = True
+            return existing
+        return None
+
     async def create_pull_request(
         self,
         owner: str,
@@ -280,6 +310,11 @@ class GitHubClient:
         head: str,
         base: str,
     ) -> Dict[str, Any]:
+        existing = await self.find_open_pull_request_by_head(
+            owner, repo, head=head, base=base
+        )
+        if existing:
+            return existing
         return await self._request(
             "POST",
             f"/repos/{owner}/{repo}/pulls",

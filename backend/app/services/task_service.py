@@ -69,6 +69,12 @@ class TaskService:
             self.db.refresh(task)
             
             logger.info(f"Created task {task.id} of type {task_type} for project {project_id}")
+
+            from app.services.savi_job_queue import arq_enabled, schedule_build_task
+
+            if arq_enabled():
+                schedule_build_task(task.id)
+
             return task
             
         except Exception as e:

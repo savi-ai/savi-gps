@@ -63,8 +63,11 @@ interface HubProject {
   id: string
   name: string
   pillar: string
+  mode?: string | null
   current_step: string
   source_plan_id?: string | null
+  source_application_id?: string | null
+  target_application_id?: string | null
 }
 
 interface ApplicationHub {
@@ -72,6 +75,7 @@ interface ApplicationHub {
   name: string
   description?: string | null
   domain?: string | null
+  origin?: string | null
   repository_count: number
   repositories: AppRepository[]
   hub: {
@@ -286,6 +290,11 @@ export default function ApplicationDetailPage() {
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{app.description}</p>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
+            {app.origin && (
+              <Badge variant="outline" className="capitalize">
+                {app.origin}
+              </Badge>
+            )}
             <Badge variant="outline">
               <GitBranch className="mr-1 h-3 w-3" />
               {app.repository_count} repos · {hub.indexed_pct}% indexed
@@ -593,7 +602,10 @@ export default function ApplicationDetailPage() {
             {hub.projects.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No projects yet. Spawn Build from a modernization plan or{' '}
-                <Link href="/dashboard/projects/new" className="text-primary hover:underline">
+                <Link
+                  href={`/dashboard/projects/new?application_id=${appId}&mode=enhance`}
+                  className="text-primary hover:underline"
+                >
                   create a project
                 </Link>{' '}
                 with this application as context.
@@ -610,7 +622,8 @@ export default function ApplicationDetailPage() {
                         {project.name}
                       </Link>
                       <p className="text-xs capitalize text-muted-foreground">
-                        {project.pillar} · {project.current_step}
+                        {project.pillar}
+                        {project.mode ? ` · ${project.mode}` : ''} · {project.current_step}
                       </p>
                     </div>
                     {project.source_plan_id && (

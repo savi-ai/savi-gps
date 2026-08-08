@@ -43,7 +43,6 @@ frontend/node_modules/
 .next/
 frontend/.next/
 out/
-build/
 dist/
 tsconfig.tsbuildinfo
 
