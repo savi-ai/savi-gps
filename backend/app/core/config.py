@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 3
     # Wiki generation: cli | api | auto (CLI then API then heuristic)
     WIKI_GENERATION_MODE: str = "auto"
+    # Max seconds for wiki_agent.sh (Claude/Copilot CLI). Default 1 hour.
+    WIKI_CLI_TIMEOUT_SECONDS: int = 3600
     # Incremental wiki: compare last stored git_head to clone HEAD
     WIKI_INCREMENTAL_ENABLED: bool = True
     WIKI_INCREMENTAL_MAX_FILES: int = 40

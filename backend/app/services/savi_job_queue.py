@@ -1,11 +1,17 @@
-"""Savi Teammate job queue (Phase B2) — Arq when enabled, else inline Alpha.
+"""Background job queue (ADR 0003) — Arq when enabled, else in-process workers.
 
-ADR 0003 / 0008: durable workers for orchestrator; uvicorn must not run long CLIs.
+Covers:
+  - Savi Teammate orchestrator
+  - Intelligence index / wiki CLI
+  - Build code-generation tasks
+
+When SAVI_USE_ARQ=true + REDIS_URL, API enqueues; run:
+  arq app.workers.savi_arq.WorkerSettings
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from app.core.config import settings
 from app.core.logger import logger
@@ -31,6 +37,35 @@ async def _get_arq_pool():
 
     _arq_pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     return _arq_pool
+
+
+def _schedule_coro(coro_factory, *, label: str) -> Dict[str, Any]:
+    """Fire-and-forget or run until complete from sync/async callers."""
+
+    async def _go():
+        return await coro_factory()
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            fut = asyncio.ensure_future(_go())
+
+            def _done(t):
+                try:
+                    t.result()
+                except Exception as e:
+                    logger.exception("Failed to enqueue %s: %s", label, e)
+
+            fut.add_done_callback(_done)
+            return {
+                "queued": True,
+                "backend": "arq" if arq_enabled() else "inline",
+                "job_id": None,
+                "pending_enqueue": True,
+            }
+        return loop.run_until_complete(_go())
+    except RuntimeError:
+        return asyncio.run(_go())
 
 
 async def enqueue_savi_orchestrate(
@@ -89,26 +124,47 @@ def schedule_orchestrator_run(
             tenant_id, team_id, savi_id, item_id, mode=mode
         )
 
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Fire-and-forget scheduling of the enqueue coroutine
-            fut = asyncio.ensure_future(_go())
+    out = _schedule_coro(_go, label="savi_orchestrate")
+    if "mode" not in out:
+        out["mode"] = mode
+    return out
 
-            def _done(t):
-                try:
-                    t.result()
-                except Exception as e:
-                    logger.exception("Failed to enqueue Savi orchestrator: %s", e)
 
-            fut.add_done_callback(_done)
-            return {
-                "queued": True,
-                "backend": "arq" if arq_enabled() else "inline",
-                "job_id": None,
-                "mode": mode,
-                "pending_enqueue": True,
-            }
-        return loop.run_until_complete(_go())
-    except RuntimeError:
-        return asyncio.run(_go())
+async def enqueue_index_run(run_id: str) -> Dict[str, Any]:
+    """Enqueue Intelligence index/wiki job (Arq only)."""
+    if not arq_enabled():
+        return {"queued": False, "backend": "in_process_worker", "job_id": None}
+
+    pool = await _get_arq_pool()
+    job = await pool.enqueue_job(
+        "execute_index_run",
+        run_id,
+        _job_id=f"index-run:{run_id}",
+    )
+    job_id = getattr(job, "job_id", None) or f"index-run:{run_id}"
+    logger.info("Enqueued execute_index_run job_id=%s run_id=%s", job_id, run_id)
+    return {"queued": True, "backend": "arq", "job_id": job_id}
+
+
+def schedule_index_run(run_id: str) -> Dict[str, Any]:
+    return _schedule_coro(lambda: enqueue_index_run(run_id), label="execute_index_run")
+
+
+async def enqueue_build_task(task_id: str) -> Dict[str, Any]:
+    """Enqueue Build generate_* task (Arq only)."""
+    if not arq_enabled():
+        return {"queued": False, "backend": "in_process_worker", "job_id": None}
+
+    pool = await _get_arq_pool()
+    job = await pool.enqueue_job(
+        "execute_build_task",
+        task_id,
+        _job_id=f"build-task:{task_id}",
+    )
+    job_id = getattr(job, "job_id", None) or f"build-task:{task_id}"
+    logger.info("Enqueued execute_build_task job_id=%s task_id=%s", job_id, task_id)
+    return {"queued": True, "backend": "arq", "job_id": job_id}
+
+
+def schedule_build_task(task_id: str) -> Dict[str, Any]:
+    return _schedule_coro(lambda: enqueue_build_task(task_id), label="execute_build_task")

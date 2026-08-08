@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.database import Repository
-from app.core.llm_client import get_llm_client
 from app.core.logger import logger
 from app.services.intelligence.chat_scope import ChatScope
 from app.services.intelligence.graph_query_service import GraphQueryService
@@ -122,7 +121,9 @@ Rules:
         })
 
         try:
-            llm = get_llm_client()
+            from app.services.llm_routing import get_other_llm_client
+
+            llm = get_other_llm_client(self.db, scope.tenant_id)
             answer = await llm.chat(llm_messages, max_tokens=4096, temperature=0.3)
         except Exception as e:
             logger.error(f"Wiki chat LLM error: {e}")

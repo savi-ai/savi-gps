@@ -204,8 +204,9 @@ class SaviIdentitySeatService:
     def resolve_execution_mode(
         self, tenant_id: str, team_id: str, savi_id: str
     ) -> str:
-        """Prefer active seat execution_mode; else env fallback."""
+        """Prefer active seat execution_mode; else tenant code-gen; else env."""
         from app.core.config import settings
+        from app.services.llm_routing import resolve_code_generation
 
         seat = self.get_seat(tenant_id, team_id, savi_id)
         if seat and seat.status == "active" and seat.execution_mode:
@@ -215,6 +216,11 @@ class SaviIdentitySeatService:
                     (seat.agent_type or "").lower(), "heuristic"
                 )
             return mode
+
+        code = resolve_code_generation(self.db, tenant_id)
+        if code.get("provider") in ("claude", "github_copilot"):
+            return code["execution_mode"]
+
         return (settings.SAVI_CODING_AGENT or "heuristic").lower()
 
     def seat_to_dict(self, seat: SaviCodingAgentSeat) -> Dict[str, Any]:

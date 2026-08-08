@@ -18,7 +18,12 @@ from app.core.logger import logger
 from app.services.connectors.registry import get_active_connector
 from app.services.savi_coding_agent_adapter import SaviCodingAgentAdapter
 from app.services.savi_context_assembly_service import SaviContextAssemblyService
-from app.services.savi_policy_gate import SaviPolicyDenied, assert_savi_action_allowed
+from app.services.savi_policy_gate import (
+    SaviPolicyDenied,
+    assert_savi_action_allowed,
+    assert_savi_apply_allowed,
+    assert_savi_submit_allowed,
+)
 from app.services.savi_sandbox import ephemeral_sandbox
 from app.services.savi_work_queue_service import SaviWorkQueueService
 
@@ -29,6 +34,7 @@ ORCH_PHASES = (
     "code",
     "test",
     "pr",
+    "awaiting_approval",
     "wait_feedback",
     "done",
     "failed",
@@ -97,6 +103,15 @@ class SaviOrchestratorService:
             phase = item.orchestrator_phase
             if phase == "wait_feedback":
                 break
+            if phase == "awaiting_approval":
+                break
+            if getattr(item, "cancel_requested", False):
+                item.orchestrator_phase = "failed"
+                item.orchestrator_error = "Cancelled (kill switch)"
+                item.state = "cancelled"
+                self._append_timeline(item, "cancel", "Kill switch — run stopped before apply")
+                self.db.commit()
+                break
             item = await self.advance_one(tenant_id, team_id, savi_id, item.id)
             if item.orchestrator_phase == "failed":
                 break
@@ -115,9 +130,20 @@ class SaviOrchestratorService:
         item = self.get_item(tenant_id, team_id, savi_id, item_id)
         if not item:
             raise ValueError("Work item not found")
+        if getattr(item, "cancel_requested", False):
+            item.orchestrator_phase = "failed"
+            item.orchestrator_error = "Cancelled (kill switch)"
+            item.state = "cancelled"
+            self._append_timeline(item, "cancel", "Kill switch")
+            self.db.commit()
+            self.db.refresh(item)
+            return item
         phase = item.orchestrator_phase or "ready"
         try:
             if phase == "ready":
+                assert_savi_submit_allowed(
+                    self.db, tenant_id=tenant_id, team_id=team_id, savi_id=savi_id
+                )
                 await self._phase_ready(item)
             elif phase == "ground":
                 await self._phase_ground(tenant_id, team_id, savi_id, item)
@@ -129,6 +155,10 @@ class SaviOrchestratorService:
                 await self._phase_test(item)
             elif phase == "pr":
                 await self._phase_pr(tenant_id, team_id, savi_id, item)
+            elif phase == "awaiting_approval":
+                self._append_timeline(
+                    item, "awaiting_approval", "Worker paused — resume via approve API"
+                )
             elif phase == "wait_feedback":
                 self._append_timeline(item, "wait_feedback", "Waiting for PR review")
             else:
@@ -303,7 +333,15 @@ class SaviOrchestratorService:
     async def _phase_pr(
         self, tenant_id: str, team_id: str, savi_id: str, item: SaviWorkItem
     ) -> None:
-        assert_savi_action_allowed("open_pr")
+        # Apply-time gate (ADR 0010 §5c) — fail closed; kill switch blocks PR
+        assert_savi_apply_allowed(
+            self.db,
+            tenant_id=tenant_id,
+            team_id=team_id,
+            savi_id=savi_id,
+            action="open_pr",
+            cancel_requested=bool(getattr(item, "cancel_requested", False)),
+        )
         # Soft-check: merge remains denied
         try:
             assert_savi_action_allowed("merge_pr")
@@ -330,25 +368,146 @@ class SaviOrchestratorService:
         files = orch.get("files") or []
         plan = orch.get("plan") or ""
 
+        # Optional HITL: if connector_meta.requires_approval, pause before PR
+        if orch.get("requires_approval") and item.orchestrator_phase != "awaiting_approval":
+            import hashlib
+            import json
+
+            diff_material = json.dumps(files, sort_keys=True, default=str)
+            item.approval_diff_hash = hashlib.sha256(
+                diff_material.encode("utf-8")
+            ).hexdigest()
+            item.approval_base_sha = (meta.get("github") or {}).get("base_sha")
+            item.approval_bound_at = datetime.now(timezone.utc)
+            item.orchestrator_phase = "awaiting_approval"
+            self._append_timeline(
+                item,
+                "awaiting_approval",
+                f"Paused for approval (diff={item.approval_diff_hash[:12]})",
+            )
+            return
+
+        from app.services.agent_runtime.contracts import IdempotencyKey
+        from app.services.agent_runtime.execution_audit import log_agent_side_effect
+        from app.services.agent_runtime.outbound_scrub import scrub_structure
+
+        files, _ = scrub_structure(files)
+        attempt = int((meta.get("github") or {}).get("attempt") or 1)
+        key = IdempotencyKey(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            work_ref=item.id,
+            action_type="open_pr",
+            attempt=attempt,
+        )
+
+        adapter = self._coding_adapter(item)
         result = await gh.open_pr_for_work_item(
             item,
             repository_id=repo_id,
-            files=files,
+            files=files if isinstance(files, list) else [],
             title=f"[Savi] {item.title}",
             body=(
                 f"Automated Savi Teammate PR for work `{item.id}`.\n\n"
                 f"## Plan\n\n{plan[:6000]}\n\n"
                 "---\n_Savi does not merge — human review required._"
             ),
+            attempt=attempt,
         )
         if not result.ok:
             raise ValueError(result.error or "Failed to open PR")
+
+        log_agent_side_effect(
+            self.db,
+            tenant_id=tenant_id,
+            actor_id=savi_id,
+            action_type="savi_open_pr",
+            resource_type="savi_work_item",
+            resource_id=item.id,
+            idempotency_key=key,
+            policy_decision="allow",
+            versions=adapter.run_versions().to_dict(),
+            savi_id=savi_id,
+            extra={
+                "pr_url": result.data.get("pr_url"),
+                "metered_by": adapter.metered_by(),
+                "branch": result.data.get("branch"),
+            },
+        )
 
         self._append_timeline(item, "pr", f"Opened {result.data.get('pr_url')}")
         item.orchestrator_phase = "wait_feedback"
         item.state = "in_review"
 
         await self._notify_pr(tenant_id, team_id, savi_id, item, result.data)
+
+    def request_cancel(
+        self, tenant_id: str, team_id: str, savi_id: str, item_id: str
+    ) -> SaviWorkItem:
+        """Kill switch — cooperative cancel; blocks apply if still pre-PR."""
+        assert_savi_action_allowed("cancel_run")
+        item = self.get_item(tenant_id, team_id, savi_id, item_id)
+        if not item:
+            raise ValueError("Work item not found")
+        item.cancel_requested = True
+        item.updated_at = datetime.now()
+        # If paused for approval or not yet past PR, fail closed without opening PR
+        if item.orchestrator_phase in (
+            "ready",
+            "ground",
+            "plan",
+            "code",
+            "test",
+            "pr",
+            "awaiting_approval",
+        ):
+            item.orchestrator_phase = "failed"
+            item.orchestrator_error = "Cancelled (kill switch) — PR not opened"
+            item.state = "cancelled"
+            self._append_timeline(
+                item, "cancel", "Kill switch: branch may exist; PR not opened; wiki not published"
+            )
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def approve_and_resume(
+        self,
+        tenant_id: str,
+        team_id: str,
+        savi_id: str,
+        item_id: str,
+        *,
+        expected_diff_hash: Optional[str] = None,
+    ) -> SaviWorkItem:
+        """Resume from awaiting_approval if diff hash still matches (§5e)."""
+        assert_savi_action_allowed("approve_work")
+        item = self.get_item(tenant_id, team_id, savi_id, item_id)
+        if not item:
+            raise ValueError("Work item not found")
+        if item.orchestrator_phase != "awaiting_approval":
+            raise ValueError("Work item is not awaiting approval")
+        if expected_diff_hash and item.approval_diff_hash != expected_diff_hash:
+            item.orchestrator_phase = "code"
+            item.orchestrator_error = None
+            self._append_timeline(
+                item,
+                "approval_invalidated",
+                "Diff moved — approval invalidated; re-queued to code",
+            )
+            self.db.commit()
+            self.db.refresh(item)
+            return item
+        item.orchestrator_phase = "pr"
+        orch = dict((item.connector_meta or {}).get("orchestrator") or {})
+        orch["requires_approval"] = False
+        meta = dict(item.connector_meta or {})
+        meta["orchestrator"] = orch
+        item.connector_meta = meta
+        self._append_timeline(item, "approved", "Approval accepted — resuming PR")
+        self.db.commit()
+        self.db.refresh(item)
+        return item
 
     async def _notify_pr(
         self, tenant_id, team_id, savi_id, item, pr_data

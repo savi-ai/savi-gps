@@ -1,14 +1,13 @@
 """Resolve wiki generation mode / LLM prefs (env + tenant overrides)."""
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-
-VALID_MODES = ("cli", "api", "auto")
-VALID_PROVIDERS = ("claude", "anthropic", "openai", "bedrock", "ollama")
 
 
 def env_llm_status() -> Dict[str, Any]:
@@ -23,9 +22,18 @@ def env_llm_status() -> Dict[str, Any]:
         or settings.AWS_SECRET_ACCESS_KEY
         or settings.BEDROCK_AWS_SECRET_ACCESS_KEY
     )
+    has_copilot_cli = bool(shutil.which("copilot"))
+    has_claude_cli = bool(shutil.which("claude"))
+    has_copilot_token = bool(
+        settings.GITHUB_TOKEN
+        or os.environ.get("COPILOT_GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
     return {
         "wiki_generation_mode_default": (settings.WIKI_GENERATION_MODE or "auto").lower(),
         "llm_provider_default": provider,
+        "code_generation_default": (settings.SAVI_CODING_AGENT or "heuristic").lower(),
         "anthropic_model": settings.ANTHROPIC_MODEL,
         "bedrock_model_id": settings.BEDROCK_MODEL_ID,
         "bedrock_region": region,
@@ -35,6 +43,9 @@ def env_llm_status() -> Dict[str, Any]:
             "openai": has_openai,
             "bedrock_explicit_keys": has_bedrock_keys,
             "bedrock_model_configured": bool(settings.BEDROCK_MODEL_ID),
+            "claude_cli_on_path": has_claude_cli,
+            "copilot_cli_on_path": has_copilot_cli,
+            "copilot_github_token": has_copilot_token,
         },
     }
 
@@ -44,31 +55,6 @@ def resolve_wiki_generation_settings(
     tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Merge env defaults with optional tenant LLM settings (non-secret)."""
-    mode = (settings.WIKI_GENERATION_MODE or "auto").lower()
-    provider = (settings.LLM_PROVIDER or "claude").lower()
-    model = settings.ANTHROPIC_MODEL
-    if provider == "bedrock":
-        model = settings.BEDROCK_MODEL_ID
-    elif provider == "openai":
-        model = "gpt-4"
+    from app.services.llm_routing import resolve_wiki_generation
 
-    tenant_override: Dict[str, Any] = {}
-    if db is not None and tenant_id:
-        from app.services.tenant_config_service import TenantConfigService
-
-        tenant_override = TenantConfigService(db).get_llm_settings(tenant_id)
-
-    if tenant_override.get("wiki_generation_mode") in VALID_MODES:
-        mode = tenant_override["wiki_generation_mode"]
-    if tenant_override.get("llm_provider") in VALID_PROVIDERS:
-        provider = tenant_override["llm_provider"]
-    if tenant_override.get("llm_model"):
-        model = tenant_override["llm_model"]
-
-    return {
-        "wiki_generation_mode": mode if mode in VALID_MODES else "auto",
-        "llm_provider": provider,
-        "llm_model": model,
-        "bedrock_region": settings.BEDROCK_AWS_REGION or settings.AWS_REGION,
-        "source": "tenant" if tenant_override else "env",
-    }
+    return resolve_wiki_generation(db, tenant_id)

@@ -132,7 +132,21 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
 
         gen_settings = state.get("wiki_generation_settings") or resolve_wiki_generation_settings()
         generation_mode = gen_settings.get("wiki_generation_mode") or "auto"
+        wiki_provider = (
+            gen_settings.get("wiki_generation_provider")
+            or gen_settings.get("llm_provider")
+            or settings.LLM_PROVIDER
+        )
+        uses_copilot_cli = bool(gen_settings.get("uses_copilot_cli")) or (
+            wiki_provider == "github_copilot"
+        )
+        agent_cli = gen_settings.get("agent_cli") or (
+            "copilot" if uses_copilot_cli else "claude"
+        )
+        # API path never uses github_copilot as get_llm_client provider
         llm_provider = gen_settings.get("llm_provider") or settings.LLM_PROVIDER
+        if llm_provider == "github_copilot":
+            llm_provider = "claude"
         llm_model = gen_settings.get("llm_model")
 
         refresh_plan = state.get("wiki_refresh_plan")
@@ -149,8 +163,9 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         wiki_md = None
 
         allow_cli = generation_mode in ("cli", "auto") and bool(clone_path)
-        allow_api = generation_mode in ("api", "auto")
-        allow_fallback = generation_mode != "cli"  # cli-only: no silent heuristic unless API also failed path
+        # Copilot wiki is CLI-only — do not fall through to API with a fake provider
+        allow_api = generation_mode in ("api", "auto") and not uses_copilot_cli
+        allow_fallback = generation_mode != "cli" and not uses_copilot_cli
 
         # Incremental updates use the API path (patch prior wiki from git diffs).
         # CLI shell scripts always regenerate fully.
@@ -187,23 +202,27 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
 
         if not wiki_json and allow_cli:
             shell_invoked = True
-            shell_result = self._run_shell_agent(
+            shell_result = await self._run_shell_agent(
                 org_name=org_name,
                 repo_slug=repo_name,
                 clone_path=clone_path,
                 output_dir=output_dir,
                 attribute_definitions=attribute_definitions,
+                agent_cli=agent_cli,
             )
             if shell_result and shell_result.get("wiki_json"):
                 shell_succeeded = True
-                generation_source = "wiki_agent_shell"
+                generation_source = f"wiki_agent_shell:{agent_cli}"
                 wiki_json = shell_result["wiki_json"]
                 wiki_html = shell_result.get("wiki_html")
                 wiki_md = shell_result.get("wiki_md")
-            elif generation_mode == "cli":
-                err = "Wiki CLI generation failed and WIKI_GENERATION_MODE=cli (no API fallback)"
+            elif generation_mode == "cli" or uses_copilot_cli:
+                detail = (shell_result or {}).get("error") or "unknown CLI failure"
+                err = (
+                    f"Wiki CLI generation failed (AGENT_CLI={agent_cli}): {detail}"
+                )
                 logger.error(redact_secrets(err))
-                mark_failed(output_dir, err)
+                mark_failed(output_dir, redact_secrets(err)[:4000])
                 raise RuntimeError(err)
 
         if not wiki_json and allow_api:
@@ -282,8 +301,10 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             mark_complete=generation_source != "wiki_agent_fallback",
             extra_meta={
                 "generation_mode": generation_mode,
+                "wiki_generation_provider": wiki_provider,
                 "llm_provider": llm_provider,
                 "llm_model": llm_model,
+                "agent_cli": agent_cli,
                 "git_head": git_head,
                 "wiki_refresh_mode": refresh_mode or "full",
                 "wiki_refresh_reason": refresh_reason,
@@ -297,6 +318,7 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         state["generation_source"] = generation_source
         state["generation_mode"] = generation_mode
         state["llm_provider"] = llm_provider
+        state["wiki_generation_provider"] = wiki_provider
         state["shell_invoked"] = shell_invoked
         state["shell_succeeded"] = shell_succeeded
         state["analysis_paths"] = paths
@@ -305,77 +327,155 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         state["wiki_refresh_reason"] = refresh_reason
         return state
 
-    def _run_shell_agent(
+    async def _run_shell_agent(
         self,
         org_name: str,
         repo_slug: str,
         clone_path: str,
         output_dir: Path,
         attribute_definitions: List[Dict],
+        agent_cli: str = "claude",
     ) -> Optional[Dict[str, Any]]:
+        """
+        Invoke wiki_agent.sh off the asyncio event loop.
+
+        Returns wiki artifacts on success, or ``{"error": "..."}`` on failure
+        (never ``None`` — callers need the reason for UI/logs).
+        """
+        import asyncio
+
         script = Path(__file__).resolve().parents[2] / "scripts" / "wiki_agent.sh"
         if not script.is_file():
-            logger.warning(f"wiki_agent.sh not found at {script}")
-            return None
+            msg = f"wiki_agent.sh not found at {script}"
+            logger.warning(msg)
+            return {"error": msg}
 
-        if not shutil.which("claude"):
-            logger.info("claude CLI not on PATH — skipping wiki_agent.sh")
-            return None
+        cli_bin = "copilot" if agent_cli == "copilot" else "claude"
+        if not shutil.which(cli_bin):
+            msg = (
+                f"{cli_bin} CLI not on PATH — install it or switch wiki provider "
+                f"(tenant settings → Wiki generation)"
+            )
+            logger.warning(msg)
+            return {"error": msg}
 
         config_path = output_dir / CONFIG_NAME
         output_dir.mkdir(parents=True, exist_ok=True)
         config_path.write_text(json.dumps(attribute_definitions, indent=2), encoding="utf-8")
 
-        if not settings.ANTHROPIC_API_KEY:
-            logger.warning("ANTHROPIC_API_KEY not set in settings — wiki_agent.sh will fail")
-            return None
+        if agent_cli == "claude" and not settings.ANTHROPIC_API_KEY:
+            msg = "ANTHROPIC_API_KEY not set — required for AGENT_CLI=claude"
+            logger.warning(msg)
+            return {"error": msg}
+
+        if agent_cli == "copilot":
+            has_token = bool(
+                os.environ.get("COPILOT_GITHUB_TOKEN")
+                or os.environ.get("GH_TOKEN")
+                or os.environ.get("GITHUB_TOKEN")
+                or getattr(settings, "GITHUB_TOKEN", None)
+            )
+            # Still attempt CLI (may use `copilot login` / gh auth); hint if no env token
+            if not has_token:
+                logger.info(
+                    "No COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN in env — "
+                    "copilot CLI must already be logged in on this host"
+                )
 
         env = _agent_subprocess_env()
+        env["AGENT_CLI"] = agent_cli
+        github_token = getattr(settings, "GITHUB_TOKEN", None) or os.environ.get("GITHUB_TOKEN")
+        if github_token and not env.get("GITHUB_TOKEN"):
+            env["GITHUB_TOKEN"] = github_token
+        if os.environ.get("COPILOT_GITHUB_TOKEN"):
+            env["COPILOT_GITHUB_TOKEN"] = os.environ["COPILOT_GITHUB_TOKEN"]
+        if os.environ.get("GH_TOKEN"):
+            env["GH_TOKEN"] = os.environ["GH_TOKEN"]
         backend_root = Path(__file__).resolve().parents[3]
+        timeout_s = max(60, int(getattr(settings, "WIKI_CLI_TIMEOUT_SECONDS", 3600) or 3600))
+
+        argv = [
+            "bash",
+            str(script),
+            org_name,
+            repo_slug,
+            str(output_dir.resolve()),
+            str(clone_path),
+            str(config_path.resolve()),
+        ]
 
         try:
             logger.info(
-                f"Invoking wiki_agent.sh for {org_name}/{repo_slug} → {output_dir}"
+                "Invoking wiki_agent.sh (AGENT_CLI=%s, timeout=%ss) for %s/%s → %s",
+                agent_cli,
+                timeout_s,
+                org_name,
+                repo_slug,
+                output_dir,
             )
-            result = subprocess.run(
-                [
-                    "bash",
-                    str(script),
-                    org_name,
-                    repo_slug,
-                    str(output_dir.resolve()),
-                    str(clone_path),
-                    str(config_path.resolve()),
-                ],
+            # Critical: do not block uvicorn's event loop for long CLI runs
+            result = await asyncio.to_thread(
+                subprocess.run,
+                argv,
                 capture_output=True,
                 text=True,
-                timeout=900,
+                timeout=timeout_s,
                 cwd=str(backend_root),
                 env=env,
             )
             if result.stdout:
-                logger.debug(f"wiki_agent.sh stdout: {result.stdout[:500]}")
+                logger.info(
+                    "wiki_agent.sh stdout (truncated): %s",
+                    redact_secrets(result.stdout[:2000]),
+                )
+            if result.stderr:
+                logger.warning(
+                    "wiki_agent.sh stderr (truncated): %s",
+                    redact_secrets(result.stderr[:2000]),
+                )
             if result.returncode != 0:
-                err = result.stderr[:1200] if result.stderr else f"exit code {result.returncode}"
-                logger.warning(f"wiki_agent.sh exit {result.returncode}: {err}")
+                err = (
+                    (result.stderr or result.stdout or f"exit code {result.returncode}")
+                )[:2000]
+                err = redact_secrets(err)
+                logger.warning(
+                    "wiki_agent.sh exit %s (AGENT_CLI=%s): %s",
+                    result.returncode,
+                    agent_cli,
+                    err,
+                )
                 mark_failed(output_dir, err)
-                return None
+                return {"error": err}
 
             json_path = output_dir / WIKI_JSON_NAME
             html_path = output_dir / WIKI_HTML_NAME
             md_path = output_dir / WIKI_MD_NAME
             if not json_path.is_file():
-                mark_failed(output_dir, f"Missing {WIKI_JSON_NAME} after shell agent")
-                return None
+                err = (
+                    f"Missing {WIKI_JSON_NAME} after shell agent "
+                    f"(AGENT_CLI={agent_cli}, exit 0)"
+                )
+                logger.warning(err)
+                mark_failed(output_dir, err)
+                return {"error": err}
 
             wiki_json = json.loads(json_path.read_text(encoding="utf-8"))
             wiki_html = html_path.read_text(encoding="utf-8") if html_path.is_file() else None
             wiki_md = md_path.read_text(encoding="utf-8") if md_path.is_file() else None
             return {"wiki_json": wiki_json, "wiki_html": wiki_html, "wiki_md": wiki_md}
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-            logger.warning("Wiki shell agent error: %s", redact_secrets(str(e)))
-            mark_failed(output_dir, redact_secrets(str(e)))
-            return None
+        except subprocess.TimeoutExpired:
+            err = (
+                f"wiki_agent.sh timed out after {timeout_s}s (AGENT_CLI={agent_cli}; "
+                f"raise WIKI_CLI_TIMEOUT_SECONDS if needed)"
+            )
+            logger.warning(err)
+            mark_failed(output_dir, err)
+            return {"error": err}
+        except (OSError, json.JSONDecodeError) as e:
+            err = redact_secrets(str(e))
+            logger.warning("Wiki shell agent error: %s", err)
+            mark_failed(output_dir, err)
+            return {"error": err}
 
     def _implementation_snippets(self, chunks: List[FileChunk], max_chars: int = 14000) -> str:
         relevant: List[FileChunk] = []

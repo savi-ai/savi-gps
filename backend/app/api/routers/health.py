@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.services import task_worker
 from app.services.intelligence import index_worker
+from app.services.savi_job_queue import arq_enabled
 
 router = APIRouter(tags=["Health"])
 
@@ -44,15 +45,31 @@ async def health_ready(response: Response):
         checks["database"] = f"error: {exc}"
         ready = False
 
-    task_ok = task_worker.is_worker_running()
-    checks["task_worker"] = "ok" if task_ok else "not_running"
-    if not task_ok:
-        ready = False
+    if arq_enabled():
+        checks["job_backend"] = "arq"
+        checks["task_worker"] = "delegated_to_arq"
+        checks["index_worker"] = "delegated_to_arq"
+        # Redis reachability is best-effort; API can still accept enqueue
+        try:
+            import redis
 
-    index_ok = index_worker.is_index_worker_running()
-    checks["index_worker"] = "ok" if index_ok else "not_running"
-    if not index_ok:
-        ready = False
+            r = redis.from_url(settings.REDIS_URL or "redis://localhost:6379")
+            r.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = f"error: {exc}"
+            ready = False
+    else:
+        checks["job_backend"] = "in_process"
+        task_ok = task_worker.is_worker_running()
+        checks["task_worker"] = "ok" if task_ok else "not_running"
+        if not task_ok:
+            ready = False
+
+        index_ok = index_worker.is_index_worker_running()
+        checks["index_worker"] = "ok" if index_ok else "not_running"
+        if not index_ok:
+            ready = False
 
     payload = {"status": "ready" if ready else "not_ready", "checks": checks}
     if not ready:

@@ -65,6 +65,7 @@ class SaviGitHubConnector:
         title: str,
         body: str,
         files: List[Dict[str, str]],
+        idempotency_key: Optional[str] = None,
     ) -> ConnectorResult:
         repo = (
             self.db.query(Repository)
@@ -88,6 +89,11 @@ class SaviGitHubConnector:
             return ConnectorResult(ok=False, error="files list is required")
 
         try:
+            from app.services.agent_runtime.outbound_scrub import scrub_structure
+
+            scrubbed_files, _ = scrub_structure(files)
+            files = scrubbed_files if isinstance(scrubbed_files, list) else files
+
             client = self._client_for_repo(repo)
             base = base_branch or repo.default_branch or "main"
             base_sha = await client.get_ref_sha(owner, repo_name, f"heads/{base}")
@@ -109,6 +115,7 @@ class SaviGitHubConnector:
                     sha=sha,
                 )
 
+            # create-PR-by-head (ADR 0010 §5b) — client.create_pull_request is idempotent
             pr = await client.create_pull_request(
                 owner,
                 repo_name,
@@ -122,8 +129,11 @@ class SaviGitHubConnector:
                 "pr_number": pr.get("number"),
                 "branch": branch,
                 "base_branch": base,
+                "base_sha": base_sha,
                 "repository_id": repo.id,
                 "github_full_name": repo.github_full_name or f"{owner}/{repo_name}",
+                "idempotency_key": idempotency_key,
+                "reused_existing_pr": bool(pr.get("_reused")) or False,
             }
             return ConnectorResult(ok=True, data=data)
         except (GitHubApiError, ValueError) as e:
@@ -238,11 +248,20 @@ class SaviGitHubConnector:
         files: Optional[List[Dict[str, str]]] = None,
         title: Optional[str] = None,
         body: Optional[str] = None,
+        attempt: int = 1,
     ) -> ConnectorResult:
-        """Open PR for a work item; default file is context brief markdown."""
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        """Open PR for a work item using deterministic branch + create-PR-by-head."""
+        from app.services.agent_runtime.contracts import IdempotencyKey
+
         short = (item.id or "")[:8]
-        branch = f"savi/{short}-{stamp}"
+        key = IdempotencyKey(
+            tenant_id=item.tenant_id,
+            repo_id=repository_id,
+            work_ref=item.id,
+            action_type="open_pr",
+            attempt=attempt,
+        )
+        branch = key.branch_name(prefix="savi")
         brief = ""
         if item.context_pack and isinstance(item.context_pack, dict):
             brief = item.context_pack.get("brief_markdown") or ""
@@ -258,7 +277,7 @@ class SaviGitHubConnector:
             f"Opened by Savi Teammate for work item `{item.id}`.\n\n"
             f"**Source:** {item.source}"
             + (f" · `{item.external_ref}`" if item.external_ref else "")
-            + "\n\n---\n"
+            + f"\n\n**Idempotency:** `{key.as_string()}`\n\n---\n"
             + (brief[:4000] if brief else (item.description or "")[:2000])
         )
         result = await self.open_pull_request(
@@ -268,6 +287,7 @@ class SaviGitHubConnector:
             title=pr_title,
             body=pr_body,
             files=default_files,
+            idempotency_key=key.as_string(),
         )
         if result.ok:
             item.pr_url = result.data.get("pr_url")
@@ -276,6 +296,8 @@ class SaviGitHubConnector:
             meta = dict(item.connector_meta or {})
             meta["github"] = {
                 "branch": result.data.get("branch"),
+                "base_sha": result.data.get("base_sha"),
+                "idempotency_key": key.as_string(),
                 "opened_at": datetime.now(timezone.utc).isoformat(),
             }
             item.connector_meta = meta

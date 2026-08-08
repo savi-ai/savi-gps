@@ -34,6 +34,12 @@ class IndexerService:
         self.db.commit()
         self.db.refresh(run)
         logger.info(f"Index run {run.id} queued for repository {repository.id}")
+
+        from app.services.savi_job_queue import arq_enabled, schedule_index_run
+
+        if arq_enabled():
+            schedule_index_run(run.id)
+
         return run
 
     def get_latest_run(self, repository_id: str) -> Optional[IndexRun]:

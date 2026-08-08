@@ -32,6 +32,7 @@ aiohttp>=3.9.0  # For direct Ollama HTTP calls
 # Authentication
 python-jose[cryptography]>=3.3.0  # JWT token handling
 passlib[bcrypt]>=1.7.4  # Password hashing
+bcrypt==4.0.1  # Pin: bcrypt>=4.1 drops __about__, which passlib still probes
 python-dateutil>=2.8.2  # Date utilities
 cryptography>=42.0.0  # GitHub PAT encryption at rest
 neo4j>=5.14.0  # Optional L2/L3 call graph (Phase 4)

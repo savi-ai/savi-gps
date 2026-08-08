@@ -39,9 +39,21 @@ DEFAULT_ASSESSMENT_SETTINGS = {
 }
 
 LLM_SETTINGS_KEY = "_llm_settings"
+CODE_GENERATION_PROVIDERS = ("claude", "github_copilot")
+WIKI_GENERATION_PROVIDERS = (
+    "claude",
+    "github_copilot",
+    "openai",
+    "bedrock",
+    "ollama",
+)
+OTHER_LLM_PROVIDERS = ("claude", "anthropic", "openai", "bedrock", "ollama")
 DEFAULT_LLM_SETTINGS = {
-    # None / missing means inherit from server env
+    # None / missing means inherit from server env / defaults
+    "code_generation_provider": None,  # claude | github_copilot
     "wiki_generation_mode": None,  # cli | api | auto
+    "wiki_generation_provider": None,  # claude | github_copilot | openai | bedrock | ollama
+    # Other LLM calls (chat, search, ideation agents)
     "llm_provider": None,  # claude | openai | bedrock | ollama
     "llm_model": None,
     # Push generated wiki markdown into the linked GitHub repo as a PR
@@ -151,12 +163,29 @@ class TenantConfigService:
         config = self.get_or_create(tenant_id)
         raw = (config.capabilities or {}).get(LLM_SETTINGS_KEY) or {}
         out: Dict[str, Any] = {}
+
+        code_gen = raw.get("code_generation_provider")
+        if code_gen in CODE_GENERATION_PROVIDERS:
+            out["code_generation_provider"] = code_gen
+
         mode = raw.get("wiki_generation_mode")
         if mode in ("cli", "api", "auto"):
             out["wiki_generation_mode"] = mode
+
+        wiki_provider = raw.get("wiki_generation_provider")
+        if wiki_provider in WIKI_GENERATION_PROVIDERS:
+            out["wiki_generation_provider"] = wiki_provider
+        else:
+            # Backward compatible: old llm_provider drove wiki
+            legacy = raw.get("llm_provider")
+            if legacy in ("claude", "anthropic"):
+                out["wiki_generation_provider"] = "claude"
+            elif legacy in WIKI_GENERATION_PROVIDERS:
+                out["wiki_generation_provider"] = legacy
+
         provider = raw.get("llm_provider")
-        if provider in ("claude", "anthropic", "openai", "bedrock", "ollama"):
-            out["llm_provider"] = provider
+        if provider in OTHER_LLM_PROVIDERS:
+            out["llm_provider"] = "claude" if provider == "anthropic" else provider
         if raw.get("llm_model"):
             out["llm_model"] = str(raw["llm_model"])[:200]
         out["wiki_github_export_enabled"] = bool(
@@ -227,6 +256,18 @@ class TenantConfigService:
         config = self.get_or_create(tenant_id)
         caps = dict(config.capabilities or {})
         current = dict(caps.get(LLM_SETTINGS_KEY) or {})
+
+        if "code_generation_provider" in settings_update:
+            code_gen = settings_update["code_generation_provider"]
+            if code_gen is None or code_gen == "":
+                current.pop("code_generation_provider", None)
+            elif code_gen in CODE_GENERATION_PROVIDERS:
+                current["code_generation_provider"] = code_gen
+            else:
+                raise ValueError(
+                    "code_generation_provider must be claude or github_copilot"
+                )
+
         if "wiki_generation_mode" in settings_update:
             mode = settings_update["wiki_generation_mode"]
             if mode is None or mode == "":
@@ -235,24 +276,52 @@ class TenantConfigService:
                 current["wiki_generation_mode"] = mode
             else:
                 raise ValueError("wiki_generation_mode must be cli, api, or auto")
+
+        if "wiki_generation_provider" in settings_update:
+            wiki_provider = settings_update["wiki_generation_provider"]
+            if wiki_provider is None or wiki_provider == "":
+                current.pop("wiki_generation_provider", None)
+            elif wiki_provider in WIKI_GENERATION_PROVIDERS:
+                current["wiki_generation_provider"] = wiki_provider
+            else:
+                raise ValueError(
+                    "wiki_generation_provider must be one of: "
+                    + ", ".join(WIKI_GENERATION_PROVIDERS)
+                )
+
         if "llm_provider" in settings_update:
             provider = settings_update["llm_provider"]
             if provider is None or provider == "":
                 current.pop("llm_provider", None)
-            elif provider in ("claude", "anthropic", "openai", "bedrock", "ollama"):
-                current["llm_provider"] = provider
+            elif provider in OTHER_LLM_PROVIDERS:
+                current["llm_provider"] = (
+                    "claude" if provider == "anthropic" else provider
+                )
             else:
-                raise ValueError("invalid llm_provider")
+                raise ValueError(
+                    "llm_provider must be claude, openai, bedrock, or ollama"
+                )
+
         if "llm_model" in settings_update:
             model = settings_update["llm_model"]
             if model is None or model == "":
                 current.pop("llm_model", None)
             else:
                 current["llm_model"] = str(model)[:200]
+
         if "wiki_github_export_enabled" in settings_update:
             current["wiki_github_export_enabled"] = bool(
                 settings_update["wiki_github_export_enabled"]
             )
+
+        mode = current.get("wiki_generation_mode")
+        wiki_p = current.get("wiki_generation_provider")
+        if wiki_p == "github_copilot" and mode == "api":
+            raise ValueError(
+                "GitHub Copilot wiki generation requires CLI (or auto); "
+                "API mode is not supported for Copilot"
+            )
+
         caps[LLM_SETTINGS_KEY] = current
         self._preserve_bags(caps, config.capabilities or {})
         for key in ALL_CAPABILITY_KEYS:
@@ -307,7 +376,10 @@ class TenantConfigService:
             **DEFAULT_ASSESSMENT_SETTINGS,
             **(raw.get(ASSESSMENT_SETTINGS_KEY) or {}),
         }
-        llm_raw = raw.get(LLM_SETTINGS_KEY) or {}
+        llm_settings = {
+            **self.get_llm_settings(config.tenant_id),
+            "wiki_github_export_path": settings.WIKI_GITHUB_EXPORT_PATH,
+        }
         return {
             "tenant_id": config.tenant_id,
             "capabilities": {
@@ -318,18 +390,7 @@ class TenantConfigService:
                 k: bool(assessment.get(k, DEFAULT_ASSESSMENT_SETTINGS[k]))
                 for k in DEFAULT_ASSESSMENT_SETTINGS
             },
-            "llm_settings": {
-                "wiki_generation_mode": llm_raw.get("wiki_generation_mode"),
-                "llm_provider": llm_raw.get("llm_provider"),
-                "llm_model": llm_raw.get("llm_model"),
-                "wiki_github_export_enabled": bool(
-                    llm_raw.get(
-                        "wiki_github_export_enabled",
-                        DEFAULT_LLM_SETTINGS["wiki_github_export_enabled"],
-                    )
-                ),
-                "wiki_github_export_path": settings.WIKI_GITHUB_EXPORT_PATH,
-            },
+            "llm_settings": llm_settings,
             "spec_layer_settings": self.get_spec_layer_settings(config.tenant_id),
             "llm_status": env_llm_status(),
             "onboarding_path": config.onboarding_path,

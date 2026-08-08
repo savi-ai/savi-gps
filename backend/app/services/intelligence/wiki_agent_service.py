@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import Repository, RepositoryWikiSite, WikiClaim, WikiPage
 from app.core.logger import logger
+from app.core.secret_redaction import redact_secrets
 from app.services.agents.wiki_agent import WikiAgent
 from app.services.intelligence.analysis_config_service import AnalysisConfigService
 from app.services.intelligence.analysis_storage import (
@@ -147,8 +148,9 @@ class WikiAgentService:
                     "previous_wiki_json": previous_wiki,
                     "git_head": git_head,
                 })
-            except Exception:
-                mark_failed(analysis_dir)
+            except Exception as e:
+                # Preserve detail already written by WikiAgent; never wipe with empty marker
+                mark_failed(analysis_dir, redact_secrets(str(e))[:4000])
                 raise
 
             return await self._persist_wiki_result(
@@ -247,49 +249,20 @@ class WikiAgentService:
             merged_attrs,
         )
 
-        self._clear_prior_wiki(repository.id)
-
-        wiki_json["_storage"] = {
-            "analysis_dir": str(analysis_dir),
-            "generation_source": generation_source,
-            "shell_invoked": state.get("shell_invoked", False),
-            "shell_succeeded": state.get("shell_succeeded", False),
-            "git_head": git_head,
-            "wiki_refresh_mode": getattr(refresh_plan, "mode", None),
-            **analysis_paths,
-        }
-
-        site = RepositoryWikiSite(
-            id=str(uuid.uuid4()),
-            repository_id=repository.id,
+        site = self._upsert_wiki_pages(
+            repository=repository,
+            wiki_json=wiki_json,
+            wiki_html=wiki_html,
+            sections_md=sections_md,
+            analysis_dir=analysis_dir,
+            analysis_paths=analysis_paths,
+            generation_source=generation_source,
             index_run_id=index_run_id,
-            title=f"{repository.name} Wiki",
-            html_content=wiki_html,
-            summary_json=wiki_json,
-            state="draft",
-            version=1,
-            generated_by=generation_source,
+            git_head=git_head,
+            refresh_plan=refresh_plan,
+            state=state,
         )
-        self.db.add(site)
 
-        for slug, title, template_type in self.SECTION_SLUGS:
-            content = sections_md.get(slug) or self._default_section(slug, wiki_json)
-            page = WikiPage(
-                id=str(uuid.uuid4()),
-                repository_id=repository.id,
-                index_run_id=index_run_id,
-                slug=slug,
-                title=title,
-                template_type=template_type,
-                content_md=content,
-                state="draft",
-                version=1,
-                freshness_at=datetime.now(),
-                drift_status="pending_review",
-            )
-            self.db.add(page)
-
-        self.db.flush()
         pages = (
             self.db.query(WikiPage)
             .filter(WikiPage.repository_id == repository.id)
@@ -347,6 +320,127 @@ class WikiAgentService:
             .order_by(RepositoryWikiSite.created_at.desc())
             .first()
         )
+
+
+    def _upsert_wiki_pages(
+        self,
+        *,
+        repository: Repository,
+        wiki_json: Dict[str, Any],
+        wiki_html: str,
+        sections_md: Dict[str, Any],
+        analysis_dir: Path,
+        analysis_paths: Dict[str, Any],
+        generation_source: str,
+        index_run_id: Optional[str],
+        git_head: Optional[str],
+        refresh_plan: Any,
+        state: Dict[str, Any],
+    ) -> RepositoryWikiSite:
+        """Upsert wiki by (repo, slug, content_hash) — ADR 0010 §5b."""
+        import hashlib
+
+        wiki_json["_storage"] = {
+            "analysis_dir": str(analysis_dir),
+            "generation_source": generation_source,
+            "shell_invoked": state.get("shell_invoked", False),
+            "shell_succeeded": state.get("shell_succeeded", False),
+            "git_head": git_head,
+            "wiki_refresh_mode": getattr(refresh_plan, "mode", None),
+            **analysis_paths,
+        }
+
+        site = (
+            self.db.query(RepositoryWikiSite)
+            .filter(RepositoryWikiSite.repository_id == repository.id)
+            .order_by(RepositoryWikiSite.created_at.desc())
+            .first()
+        )
+        if site:
+            site.index_run_id = index_run_id
+            site.html_content = wiki_html
+            site.summary_json = wiki_json
+            site.generated_by = generation_source
+            site.version = (site.version or 1) + 1
+            site.state = "draft"
+        else:
+            site = RepositoryWikiSite(
+                id=str(uuid.uuid4()),
+                repository_id=repository.id,
+                index_run_id=index_run_id,
+                title=f"{repository.name} Wiki",
+                html_content=wiki_html,
+                summary_json=wiki_json,
+                state="draft",
+                version=1,
+                generated_by=generation_source,
+            )
+            self.db.add(site)
+
+        keep_slugs = set()
+        for slug, title, template_type in self.SECTION_SLUGS:
+            content = sections_md.get(slug) or self._default_section(slug, wiki_json)
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            keep_slugs.add(slug)
+            page = (
+                self.db.query(WikiPage)
+                .filter(
+                    WikiPage.repository_id == repository.id,
+                    WikiPage.slug == slug,
+                )
+                .first()
+            )
+            if page and (page.content_hash or "") == content_hash:
+                page.index_run_id = index_run_id
+                page.freshness_at = datetime.now()
+                continue
+            if page:
+                self.db.query(WikiClaim).filter(WikiClaim.page_id == page.id).delete(
+                    synchronize_session=False
+                )
+                page.title = title
+                page.template_type = template_type
+                page.content_md = content
+                page.content_hash = content_hash
+                page.index_run_id = index_run_id
+                page.version = (page.version or 1) + 1
+                page.freshness_at = datetime.now()
+                page.drift_status = "pending_review"
+                page.state = "draft"
+            else:
+                self.db.add(
+                    WikiPage(
+                        id=str(uuid.uuid4()),
+                        repository_id=repository.id,
+                        index_run_id=index_run_id,
+                        slug=slug,
+                        title=title,
+                        template_type=template_type,
+                        content_md=content,
+                        content_hash=content_hash,
+                        state="draft",
+                        version=1,
+                        freshness_at=datetime.now(),
+                        drift_status="pending_review",
+                    )
+                )
+
+        stale = (
+            self.db.query(WikiPage)
+            .filter(
+                WikiPage.repository_id == repository.id,
+                ~WikiPage.slug.in_(keep_slugs),
+            )
+            .all()
+        )
+        for page in stale:
+            self.db.query(WikiClaim).filter(WikiClaim.page_id == page.id).delete(
+                synchronize_session=False
+            )
+            self.db.delete(page)
+
+        self.db.flush()
+        return site
 
     def _clear_prior_wiki(self, repository_id: str) -> None:
         page_ids = [

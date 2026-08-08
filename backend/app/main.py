@@ -43,22 +43,33 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
     
-    # Start background task worker
+    # Start background workers (in-process) unless Arq owns long-running jobs
+    from app.services.savi_job_queue import arq_enabled
     from app.services.task_worker import start_worker, stop_worker
     from app.services.intelligence.index_worker import start_index_worker, stop_index_worker
-    await start_worker()
-    logger.info("Task worker started")
-    await start_index_worker()
-    logger.info("Intelligence index worker started")
+
+    if arq_enabled():
+        logger.info(
+            "SAVI_USE_ARQ=true — skipping in-process task/index workers; "
+            "run: make savi-arq-worker (index, Build tasks, Teammate)"
+        )
+    else:
+        await start_worker()
+        logger.info("Task worker started (in-process)")
+        await start_index_worker()
+        logger.info("Intelligence index worker started (in-process)")
     
     yield
     
     # Stop background task worker
     logger.info("Shutting down Savi GPS...")
-    await stop_index_worker()
-    logger.info("Intelligence index worker stopped")
-    await stop_worker()
-    logger.info("Task worker stopped")
+    if not arq_enabled():
+        await stop_index_worker()
+        logger.info("Intelligence index worker stopped")
+        await stop_worker()
+        logger.info("Task worker stopped")
+    else:
+        logger.info("Arq mode — no in-process workers to stop")
 
 # Create FastAPI app
 app = FastAPI(

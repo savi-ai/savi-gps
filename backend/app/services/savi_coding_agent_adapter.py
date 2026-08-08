@@ -404,3 +404,58 @@ class SaviCodingAgentAdapter:
             files = self._heuristic_files(item, plan, short)
             write_files(sandbox, files)
         return files
+
+    # --- AgentRun surface (ADR 0010 §3 — extends this adapter, not a parallel type) ---
+
+    @property
+    def execution_mode(self) -> str:
+        return self.mode
+
+    def metered_by(self) -> str:
+        """Seat CLI ⇒ metered_by_seat; API/llm/heuristic ⇒ metered_by_platform (§6a)."""
+        if self.mode in CLI_MODES:
+            return "seat"
+        return "platform"
+
+    def run_versions(self) -> "RunVersions":
+        from app.services.agent_runtime.contracts import RunVersions
+
+        model = None
+        if self.mode in ("llm", "api"):
+            model = getattr(settings, "ANTHROPIC_MODEL", None) or getattr(
+                settings, "LLM_PROVIDER", None
+            )
+        return RunVersions(
+            harness_version="savi-coding-adapter/1",
+            model_id=str(model) if model else None,
+            prompt_version="savi-prompts/1",
+            execution_mode=self.mode,
+        )
+
+    async def submit(self, job: Dict[str, Any]) -> str:
+        run_id = str(job.get("run_id") or job.get("work_item_id") or "local")
+        self._pending_job = job
+        self._pending_run_id = run_id
+        return run_id
+
+    async def stream(self, run_id: str):
+        yield {"run_id": run_id, "event": "started", "mode": self.mode}
+        yield {"run_id": run_id, "event": "progress", "pct": 50}
+
+    async def result(self, run_id: str) -> "AgentRunResult":
+        from app.services.agent_runtime.contracts import AgentRunResult
+        from app.services.agent_runtime.outbound_scrub import scrub_structure
+
+        job = getattr(self, "_pending_job", None) or {}
+        artifacts = dict(job.get("artifacts") or {})
+        trajectory = list(job.get("trajectory") or [])
+        scrubbed_art, n1 = scrub_structure(artifacts)
+        scrubbed_traj, n2 = scrub_structure(trajectory)
+        return AgentRunResult(
+            artifacts=scrubbed_art if isinstance(scrubbed_art, dict) else {},
+            trajectory=scrubbed_traj if isinstance(scrubbed_traj, list) else [],
+            versions=self.run_versions(),
+            metered_by=self.metered_by(),  # type: ignore[arg-type]
+            tokens_estimate=int(job.get("tokens") or 0),
+            scrubbed=(n1 + n2) > 0,
+        )

@@ -1009,7 +1009,10 @@ async def idea_chat(
         messages.append({"role": "user", "content": request.message})
         
         # Use chat method for conversational response
-        response_text = await idea_agent.llm_client.chat(messages)
+        from app.services.llm_routing import get_other_llm_client
+
+        llm = get_other_llm_client(db, project.tenant_id)
+        response_text = await llm.chat(messages)
         
         # Check if LLM response indicates readiness to proceed
         # Look for keywords that suggest the idea is refined and ready

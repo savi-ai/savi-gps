@@ -609,11 +609,16 @@ class SaviWorkItem(Base):
     connector_meta = Column(JSON, nullable=True)  # jira status, slack thread, check runs, …
 
     # T6 orchestrator
-    # ready | ground | plan | code | test | pr | wait_feedback | done | failed
+    # ready | ground | plan | code | test | pr | awaiting_approval | wait_feedback | done | failed
     orchestrator_phase = Column(String, nullable=True, index=True)
     orchestrator_timeline = Column(JSON, nullable=True)  # [{phase, at, detail, tokens, cost}]
     orchestrator_tokens = Column(Integer, nullable=True, default=0)
     orchestrator_error = Column(Text, nullable=True)
+    # ADR 0010 kill switch + approval binding
+    cancel_requested = Column(Boolean, default=False)
+    approval_base_sha = Column(String, nullable=True)
+    approval_diff_hash = Column(String, nullable=True)
+    approval_bound_at = Column(DateTime, nullable=True)
 
     assigned_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -780,6 +785,7 @@ class WikiPage(Base):
     title = Column(String, nullable=False)
     template_type = Column(String, nullable=False, default="custom")
     content_md = Column(Text, nullable=False)
+    content_hash = Column(String, nullable=True, index=True)
     mermaid = Column(Text, nullable=True)
     state = Column(String, nullable=False, default="draft")  # draft | live
     version = Column(Integer, nullable=False, default=1)
@@ -1438,6 +1444,10 @@ def init_db():
                         "orchestrator_timeline": "JSON",
                         "orchestrator_tokens": "INTEGER",
                         "orchestrator_error": "TEXT",
+                        "cancel_requested": "BOOLEAN",
+                        "approval_base_sha": "TEXT",
+                        "approval_diff_hash": "TEXT",
+                        "approval_bound_at": "DATETIME",
                     }.items():
                         if col_name not in work_columns:
                             conn.execute(text(
@@ -1447,6 +1457,16 @@ def init_db():
                             logger.info(
                                 f"Added {col_name} column to savi_work_items table"
                             )
+
+                if inspector.has_table("wiki_pages"):
+                    result = conn.execute(text("PRAGMA table_info(wiki_pages)"))
+                    wiki_cols = [row[1] for row in result]
+                    if "content_hash" not in wiki_cols:
+                        conn.execute(text(
+                            "ALTER TABLE wiki_pages ADD COLUMN content_hash TEXT"
+                        ))
+                        conn.commit()
+                        logger.info("Added content_hash column to wiki_pages table")
 
                 if inspector.has_table("savi_instances"):
                     result = conn.execute(text("PRAGMA table_info(savi_instances)"))
