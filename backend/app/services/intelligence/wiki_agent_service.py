@@ -16,6 +16,8 @@ from app.services.agents.wiki_agent import WikiAgent
 from app.services.intelligence.analysis_config_service import AnalysisConfigService
 from app.services.intelligence.analysis_storage import (
     META_NAME,
+    WIKI_HTML_NAME,
+    WIKI_MD_NAME,
     get_analysis_dir,
     mark_completed,
     mark_failed,
@@ -98,13 +100,29 @@ class WikiAgentService:
             )
 
             if refresh_plan.mode == "unchanged" and previous_wiki:
-                return self._skip_unchanged_wiki(
+                site = self.get_wiki_site(repository.id)
+                if site and (site.html_content or site.summary_json):
+                    return self._skip_unchanged_wiki(
+                        repository=repository,
+                        analysis_dir=analysis_dir,
+                        previous_wiki=previous_wiki,
+                        git_head=git_head,
+                        index_run_id=index_run_id,
+                        refresh_reason=refresh_plan.reason,
+                    )
+                logger.warning(
+                    "Wiki HEAD unchanged for %s but no DB wiki site — hydrating from disk",
+                    repository.github_full_name or repository.name,
+                )
+                return await self._hydrate_wiki_from_disk(
                     repository=repository,
                     analysis_dir=analysis_dir,
                     previous_wiki=previous_wiki,
                     git_head=git_head,
                     index_run_id=index_run_id,
-                    refresh_reason=refresh_plan.reason,
+                    refresh_plan=refresh_plan,
+                    extracted=[],
+                    definitions=definitions,
                 )
 
             mark_started(analysis_dir)
@@ -207,9 +225,11 @@ class WikiAgentService:
             repository.id,
             (git_head or "")[:12],
         )
+        attrs = previous_wiki.get("analysis_attributes") or []
+        attr_count = len(attrs) if isinstance(attrs, (list, dict)) else 0
         return {
             "wiki_site_id": site.id if site else None,
-            "attribute_count": len(previous_wiki.get("analysis_attributes") or []),
+            "attribute_count": attr_count,
             "page_count": page_count,
             "analysis_dir": str(analysis_dir),
             "generation_source": "wiki_unchanged",
@@ -217,6 +237,73 @@ class WikiAgentService:
             "wiki_refresh_mode": "unchanged",
             "git_head": git_head,
         }
+
+    async def _hydrate_wiki_from_disk(
+        self,
+        *,
+        repository: Repository,
+        analysis_dir: Path,
+        previous_wiki: Dict[str, Any],
+        git_head: Optional[str],
+        index_run_id: Optional[str],
+        refresh_plan: Any,
+        extracted: List[Any],
+        definitions: List[Dict],
+    ) -> Dict[str, Any]:
+        """Persist existing wiki artifacts into DB when incremental skip would hide a missing site."""
+        html_path = analysis_dir / WIKI_HTML_NAME
+        md_path = analysis_dir / WIKI_MD_NAME
+        wiki_html = html_path.read_text(encoding="utf-8") if html_path.is_file() else ""
+        wiki_md = md_path.read_text(encoding="utf-8") if md_path.is_file() else None
+        sections_md = previous_wiki.get("sections_md")
+        if not isinstance(sections_md, dict):
+            sections_md = {}
+
+        state = {
+            "wiki_json": previous_wiki,
+            "wiki_html": wiki_html,
+            "wiki_md": wiki_md,
+            "sections_md": sections_md,
+            "generation_source": "wiki_hydrate_disk",
+            "analysis_paths": {},
+            "shell_invoked": False,
+            "shell_succeeded": False,
+        }
+        result = await self._persist_wiki_result(
+            repository=repository,
+            state=state,
+            extracted=extracted,
+            definitions=definitions,
+            analysis_dir=analysis_dir,
+            index_run_id=index_run_id,
+            git_head=git_head,
+            refresh_plan=refresh_plan,
+        )
+        mark_completed(analysis_dir)
+        meta_path = analysis_dir / META_NAME
+        meta: Dict[str, Any] = {}
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        meta.update({
+            "git_head": git_head,
+            "wiki_refresh_mode": "hydrate_db",
+            "wiki_refresh_reason": getattr(refresh_plan, "reason", None) or "missing_db_site",
+            "index_run_id": index_run_id or meta.get("index_run_id"),
+            "written_at": datetime.now().isoformat(),
+            "generation_source": "wiki_hydrate_disk",
+        })
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        result["wiki_refresh_mode"] = "hydrate_db"
+        result["generation_source"] = "wiki_hydrate_disk"
+        logger.info(
+            "Hydrated wiki site for %s from disk artifacts (html=%s chars)",
+            repository.id,
+            len(wiki_html),
+        )
+        return result
 
     async def _persist_wiki_result(
         self,
@@ -378,8 +465,9 @@ class WikiAgentService:
             self.db.add(site)
 
         keep_slugs = set()
+        sections = sections_md if isinstance(sections_md, dict) else {}
         for slug, title, template_type in self.SECTION_SLUGS:
-            content = sections_md.get(slug) or self._default_section(slug, wiki_json)
+            content = sections.get(slug) or self._default_section(slug, wiki_json)
             content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             keep_slugs.add(slug)
             page = (
@@ -458,10 +546,38 @@ class WikiAgentService:
             RepositoryWikiSite.repository_id == repository_id
         ).delete()
 
+    @staticmethod
+    def _normalize_llm_attrs(llm_attrs: Any) -> List[Dict[str, Any]]:
+        """CLI wiki JSON often uses {key: value} instead of [{key, value}, ...]."""
+        if not llm_attrs:
+            return []
+        if isinstance(llm_attrs, list):
+            return [a for a in llm_attrs if isinstance(a, dict)]
+        if isinstance(llm_attrs, dict):
+            out: List[Dict[str, Any]] = []
+            for key, value in llm_attrs.items():
+                if isinstance(value, dict) and ("value" in value or "key" in value):
+                    out.append({
+                        "key": value.get("key") or str(key),
+                        "label": value.get("label"),
+                        "value": value.get("value", ""),
+                        "source_file": value.get("source_file"),
+                        "line_start": value.get("line_start"),
+                        "confidence": value.get("confidence", "medium"),
+                    })
+                else:
+                    if isinstance(value, (list, dict)):
+                        rendered = json.dumps(value, ensure_ascii=False)
+                    else:
+                        rendered = "" if value is None else str(value)
+                    out.append({"key": str(key), "value": rendered, "confidence": "medium"})
+            return out
+        return []
+
     def _merge_attributes(
         self,
         extracted: List[Any],
-        llm_attrs: List[Dict],
+        llm_attrs: Any,
         definitions: List[Dict],
     ) -> List[Dict[str, Any]]:
         by_key: Dict[str, Dict[str, Any]] = {}
@@ -477,7 +593,7 @@ class WikiAgentService:
                 "confidence": e.confidence,
             }
 
-        for a in llm_attrs:
+        for a in self._normalize_llm_attrs(llm_attrs):
             key = a.get("key", "")
             if not key:
                 continue
@@ -496,31 +612,76 @@ class WikiAgentService:
 
     def _default_section(self, slug: str, wiki_json: Dict) -> str:
         if slug == "overview":
-            o = wiki_json.get("overview", {})
-            return f"# Overview\n\n{o.get('description', '')}\n"
+            o = wiki_json.get("overview") or {}
+            if not isinstance(o, dict):
+                return f"# Overview\n\n{o}\n"
+            return f"# Overview\n\n{o.get('description') or o.get('summary') or ''}\n"
         if slug == "architecture":
-            d = wiki_json.get("diagrams", {}).get("high_level_mermaid", "graph TD\n  A[App]")
-            return f"# Architecture\n\n```mermaid\n{d}\n```\n"
+            diagrams = wiki_json.get("diagrams") if isinstance(wiki_json.get("diagrams"), dict) else {}
+            d = diagrams.get("high_level_mermaid")
+            if not d:
+                arch = wiki_json.get("architecture")
+                if isinstance(arch, str):
+                    d = arch
+                elif isinstance(arch, dict):
+                    d = arch.get("pattern") or arch.get("summary") or ""
+            return f"# Architecture\n\n```mermaid\n{d or 'graph TD\\n  A[App]'}\n```\n"
         if slug == "business_logic":
             bl = wiki_json.get("business_logic_layer") or {}
-            lines = [f"# Business Logic Layer\n\n{bl.get('summary', '')}\n"]
+            if not isinstance(bl, dict):
+                return f"# Business Logic Layer\n\n{bl}\n"
+            lines = [f"# Business Logic Layer\n\n{bl.get('summary') or bl.get('description') or ''}\n"]
             for comp in bl.get("components") or []:
+                if isinstance(comp, str):
+                    lines.append(f"- {comp}\n")
+                    continue
+                if not isinstance(comp, dict):
+                    continue
                 lines.append(f"## {comp.get('name', 'Component')}\n")
                 if comp.get("purpose"):
                     lines.append(f"**Purpose:** {comp['purpose']}\n")
                 for wf in comp.get("workflows") or []:
-                    steps = " → ".join(wf.get("steps") or [])
-                    lines.append(f"- **{wf.get('operation', 'Workflow')}:** {steps}\n")
-                for rule in comp.get("business_rules") or []:
+                    if isinstance(wf, dict):
+                        steps = wf.get("steps") or []
+                        if isinstance(steps, list):
+                            step_text = " → ".join(str(s) for s in steps)
+                        else:
+                            step_text = str(steps)
+                        lines.append(f"- **{wf.get('operation', 'Workflow')}:** {step_text}\n")
+                    else:
+                        lines.append(f"- {wf}\n")
+                for rule in (comp.get("business_rules") or comp.get("rules") or []):
                     text = rule.get("rule", rule) if isinstance(rule, dict) else rule
                     lines.append(f"- {text}\n")
             return "".join(lines) or "# Business Logic Layer\n\nNot detected.\n"
         if slug == "api_surface":
             items = wiki_json.get("api_surface") or []
-            lines = "\n".join(f"- `{i.get('file', '')}`" for i in items)
-            return f"# API Surface\n\n{lines or 'Not detected'}\n"
+            if isinstance(items, dict):
+                endpoints = items.get("endpoints") or []
+                if isinstance(endpoints, list) and endpoints:
+                    lines = []
+                    for ep in endpoints:
+                        if isinstance(ep, dict):
+                            lines.append(
+                                f"- `{ep.get('method', '')} {ep.get('path') or ep.get('file', '')}`"
+                                f" {ep.get('description') or ''}".rstrip()
+                            )
+                        else:
+                            lines.append(f"- `{ep}`")
+                    return f"# API Surface\n\n" + "\n".join(lines) + "\n"
+                return f"# API Surface\n\n{json.dumps(items, indent=2)}\n"
+            lines = []
+            for i in items if isinstance(items, list) else []:
+                if isinstance(i, dict):
+                    lines.append(f"- `{i.get('file') or i.get('path') or ''}`")
+                else:
+                    lines.append(f"- `{i}`")
+            return f"# API Surface\n\n{chr(10).join(lines) or 'Not detected'}\n"
         if slug == "build_deploy":
-            b = wiki_json.get("build_deploy", {})
-            arts = "\n".join(f"- `{a}`" for a in (b.get("artifacts") or []))
-            return f"# Build & Deploy\n\n{b.get('summary', '')}\n\n{arts}\n"
+            b = wiki_json.get("build_deploy") or wiki_json.get("deployment_info") or {}
+            if not isinstance(b, dict):
+                return f"# Build & Deploy\n\n{b}\n"
+            arts = "\n".join(f"- `{a}`" for a in (b.get("artifacts") or []) if a)
+            summary = b.get("summary") or b.get("hosting") or ""
+            return f"# Build & Deploy\n\n{summary}\n\n{arts}\n"
         return f"# {slug}\n"
