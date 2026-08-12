@@ -146,6 +146,32 @@ async def execute_build_task(ctx, task_id: str) -> dict:
         db.close()
 
 
+async def execute_application_wiki(ctx, tenant_id: str, application_id: str) -> dict:
+    """Multi-repo application wiki generation."""
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    db = SessionLocal()
+    try:
+        logger.info(
+            "execute_application_wiki starting tenant=%s app=%s",
+            tenant_id,
+            application_id,
+        )
+        result = await ApplicationWikiAgentService(db).generate_for_application(
+            tenant_id, application_id
+        )
+        return {"ok": True, "application_id": application_id, "result": result}
+    except Exception as e:
+        logger.exception(
+            "execute_application_wiki failed app=%s: %s", application_id, e
+        )
+        raise
+    finally:
+        db.close()
+
+
 async def on_startup(ctx) -> None:
     """Re-queue orphaned pending DB rows after worker restart."""
     from app.core.database import IndexRun, Task
@@ -189,7 +215,7 @@ async def on_startup(ctx) -> None:
 
 
 class WorkerSettings:
-    functions = [savi_orchestrate, execute_index_run, execute_build_task]
+    functions = [savi_orchestrate, execute_index_run, execute_build_task, execute_application_wiki]
     on_startup = on_startup
     redis_settings = (
         RedisSettings.from_dsn(settings.REDIS_URL or "redis://localhost:6379")

@@ -1,0 +1,45 @@
+Analyze the APPLICATION workspace at the path provided.
+
+This workspace contains MULTIPLE repositories under `repos/<slug>/`. Each subdirectory is one product component. A MANIFEST.json at the workspace root lists member repository names, roles, and relative paths.
+
+Goal: Create a comprehensive Application Wiki that documents:
+1. Each component/repo (purpose, architecture highlights, key APIs, tech stack)
+2. How the repos integrate and depend on each other
+3. High-level component interaction diagrams and service map
+4. Cross-cutting data flows and operational concerns
+
+Do NOT treat this as a single-repo wiki. Explicitly cover multi-repo relationships.
+
+HTML / Markdown sections (include whatever applies — do not hallucinate):
+- Application Overview (product purpose across all members)
+- Components (one subsection per member repo / role)
+- Integration & Dependencies (how components call, queue, share data, or auth)
+- Service Map / Component Interaction (Mermaid)
+- Cross-Repo Data Flow
+- End-to-End Flows spanning multiple repos
+- Shared Technology Stack
+- Build, Deploy, and Local Multi-Repo Setup (if evidence exists)
+- Any other sections that help teams and agents understand the system
+
+STYLE REFERENCE: Match the layout and quality of single-repo Deep Wiki (sticky TOC, Mermaid wrappers, citations).
+
+*** MULTI-REPO RULES ***
+
+- Cite files with paths relative to the workspace, e.g. `repos/api-service/src/main.py`.
+- Prefer MANIFEST roles (frontend, backend, library, …) when labeling components.
+- If a service-map Mermaid diagram is provided in context, refine or incorporate it — do not invent edges without evidence.
+- For each component, summarize from that repo's source (README, entrypoints, routers, services).
+- Integration section must explain contracts between repos (HTTP, events, shared DB, libraries).
+
+OUTPUT FILES (write all to the output directory only — never modify clones):
+- wiki_site.html — full standalone HTML wiki
+- wiki_site.md — same content as Markdown
+- wiki_result.json — structured JSON including:
+  - application_name, overview, components[], integration, dependencies
+  - diagrams (high_level_mermaid, service_map_mermaid, data_flow_mermaid, …)
+  - sections_md keys: overview, components, integration, dependencies, service_map, data_flow, build_deploy
+
+STATUS MARKERS (in output directory):
+- WIKI_STARTED — ISO timestamp when analysis begins
+- WIKI_COMPLETED — ISO timestamp when all files are written
+- WIKI_FAILED — ISO timestamp + error message on failure

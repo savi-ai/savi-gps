@@ -39,8 +39,18 @@ class RepoCloneService:
         url: str,
         branch: str,
         token: Optional[str] = None,
+        *,
+        target_dir: Optional[str] = None,
     ) -> str:
-        temp_dir = tempfile.mkdtemp(prefix="savi_repo_")
+        """Shallow-clone into a temp dir, or into ``target_dir`` when provided."""
+        if target_dir:
+            dest = target_dir
+            if os.path.exists(dest):
+                shutil.rmtree(dest, ignore_errors=True)
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        else:
+            dest = tempfile.mkdtemp(prefix="savi_repo_")
+
         clone_url = url
         if token:
             clone_url = inject_token_in_clone_url(url, token)
@@ -53,7 +63,7 @@ class RepoCloneService:
             "--branch",
             branch,
             clone_url,
-            temp_dir,
+            dest,
         ]
         logger.info(f"Shallow cloning {normalize_github_url(url)} branch={branch}")
         try:
@@ -65,14 +75,17 @@ class RepoCloneService:
                 timeout=300,
             )
         except subprocess.CalledProcessError as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            if not target_dir:
+                shutil.rmtree(dest, ignore_errors=True)
+            else:
+                shutil.rmtree(dest, ignore_errors=True)
             stderr = e.stderr or e.stdout or str(e)
             raise RuntimeError(f"Git clone failed: {stderr[:500]}") from e
         except subprocess.TimeoutExpired as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(dest, ignore_errors=True)
             raise RuntimeError("Git clone timed out after 300s") from e
 
-        return temp_dir
+        return dest
 
     def ensure_clone(
         self,

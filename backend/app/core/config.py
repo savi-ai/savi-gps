@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     WIKI_INCREMENTAL_MAX_DIFF_CHARS: int = 24000
     # Repo-relative path for optional GitHub wiki export (also ignored for regen)
     WIKI_GITHUB_EXPORT_PATH: str = "docs/savi-wiki"
+    # Application wiki fan-out path (ignored for per-repo regen like savi-wiki)
+    WIKI_APP_GITHUB_EXPORT_PATH: str = "docs/savi-app-wiki"
+    # Keep multi-repo clones after app wiki (debug). Default: cleanup.
+    WIKI_APP_KEEP_WORKSPACE: bool = False
 
     # SOP Configuration
     SOP_DIRECTORY: str = str(Path(__file__).parent.parent.parent / "sops")

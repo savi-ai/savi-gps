@@ -23,8 +23,14 @@ import {
   ClipboardList,
   GitBranch,
   BookOpen,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import { ServiceMapPanel } from '@/components/intelligence/ServiceMapPanel'
+import {
+  ApplicationWikiGenerateDialog,
+  type MemberReadinessSummary,
+} from '@/components/intelligence/ApplicationWikiGenerateDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { cn } from '@/lib/utils'
 
@@ -121,6 +127,12 @@ export default function ApplicationDetailPage() {
   const [readinessRepoId, setReadinessRepoId] = useState<string | null>(null)
   const [wikiMarkdown, setWikiMarkdown] = useState<string | null>(null)
   const [wikiLoading, setWikiLoading] = useState(false)
+  const [wikiSource, setWikiSource] = useState<string | null>(null)
+  const [wikiStatus, setWikiStatus] = useState<string | null>(null)
+  const [wikiGenerating, setWikiGenerating] = useState(false)
+  const [wikiGenerateOpen, setWikiGenerateOpen] = useState(false)
+  const [wikiBanner, setWikiBanner] = useState<string | null>(null)
+  const [memberReadiness, setMemberReadiness] = useState<MemberReadinessSummary | null>(null)
   const [creatingPlans, setCreatingPlans] = useState(false)
   const [planMessage, setPlanMessage] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<
@@ -160,10 +172,21 @@ export default function ApplicationDetailPage() {
     const loadWiki = async () => {
       setWikiLoading(true)
       try {
-        const res = await apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`)
-        if (!cancelled) setWikiMarkdown(res.data?.markdown || '')
+        const [wikiRes, statusRes] = await Promise.all([
+          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`),
+          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki/status`).catch(() => null),
+        ])
+        if (!cancelled) {
+          setWikiMarkdown(wikiRes.data?.markdown || '')
+          setWikiSource(wikiRes.data?.source || null)
+          setWikiStatus(statusRes?.data?.status || wikiRes.data?.status?.status || null)
+          setMemberReadiness(statusRes?.data?.member_readiness || null)
+        }
       } catch {
-        if (!cancelled) setWikiMarkdown(null)
+        if (!cancelled) {
+          setWikiMarkdown(null)
+          setWikiSource(null)
+        }
       } finally {
         if (!cancelled) setWikiLoading(false)
       }
@@ -173,6 +196,49 @@ export default function ApplicationDetailPage() {
       cancelled = true
     }
   }, [tab, appId])
+
+  const pollAppWikiUntilDone = async () => {
+    setWikiStatus('running')
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000))
+      const statusRes = await apiClient.get(
+        `/api/v1/intelligence/applications/${appId}/wiki/status`
+      )
+      const st = statusRes.data?.status
+      setWikiStatus(st || null)
+      setMemberReadiness(statusRes.data?.member_readiness || null)
+      if (st === 'completed' || st === 'failed') {
+        const wikiRes = await apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`)
+        setWikiMarkdown(wikiRes.data?.markdown || '')
+        setWikiSource(wikiRes.data?.source || null)
+        break
+      }
+    }
+  }
+
+  const onWikiGenerateCompleted = async (result: {
+    deferred?: boolean
+    message?: string
+  }) => {
+    setWikiBanner(result.message || null)
+    if (result.deferred) {
+      setWikiStatus(null)
+      await load()
+      const statusRes = await apiClient
+        .get(`/api/v1/intelligence/applications/${appId}/wiki/status`)
+        .catch(() => null)
+      setMemberReadiness(statusRes?.data?.member_readiness || null)
+      return
+    }
+    setWikiGenerating(true)
+    try {
+      await pollAppWikiUntilDone()
+    } catch {
+      setWikiStatus('failed')
+    } finally {
+      setWikiGenerating(false)
+    }
+  }
 
   if (!hasPermission('can_use_intelligence')) return null
 
@@ -462,28 +528,100 @@ export default function ApplicationDetailPage() {
                 Application wiki
               </CardTitle>
               <CardDescription>
-                Composed at read time from member repository wikis — no duplicate indexing
+                Multi-repo wiki across all member repositories (plus per-repo wikis).
+                {wikiSource === 'synthesized' && ' Showing synthesizer fallback until generation completes.'}
+                {wikiSource === 'generated' && ' Generated from cloned member repos.'}
               </CardDescription>
+              {wikiStatus && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Status: {wikiStatus}
+                </p>
+              )}
+              {memberReadiness && memberReadiness.total_count > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Member wikis: {memberReadiness.ready_count}/{memberReadiness.total_count} ready
+                  {!memberReadiness.all_ready
+                    ? ' — Generate will ask whether to proceed now or retry incomplete repos first.'
+                    : null}
+                </p>
+              )}
+              {wikiBanner && (
+                <p className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-xs text-foreground">
+                  {wikiBanner}
+                </p>
+              )}
             </div>
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/dashboard/intelligence/applications/${appId}/wiki-site`}>
-                View HTML
-              </Link>
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={wikiGenerating || wikiStatus === 'running'}
+                onClick={() => {
+                  setWikiBanner(null)
+                  setWikiGenerateOpen(true)
+                }}
+              >
+                {wikiGenerating || wikiStatus === 'running' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {wikiSource === 'generated' ? 'Regenerate' : 'Generate'}
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/dashboard/intelligence/applications/${appId}/wiki-site`}>
+                  View HTML
+                </Link>
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
+            {memberReadiness && memberReadiness.members.length > 0 && (
+              <ul className="mb-4 space-y-1.5 rounded-md border p-3">
+                {memberReadiness.members.map((m) => (
+                  <li
+                    key={m.repository_id}
+                    className="flex items-center justify-between gap-2 text-sm"
+                  >
+                    <Link
+                      href={`/dashboard/intelligence/repositories/${m.repository_id}`}
+                      className="truncate text-primary hover:underline"
+                    >
+                      {m.name}
+                    </Link>
+                    <Badge
+                      variant={m.wiki_ready ? 'default' : m.repo_status === 'error' ? 'destructive' : 'outline'}
+                      className="shrink-0 capitalize"
+                    >
+                      {m.wiki_ready
+                        ? 'Wiki ready'
+                        : m.index_run_status === 'running' || m.index_run_status === 'pending'
+                          ? `Analyzing ${m.index_progress ?? 0}%`
+                          : m.repo_status}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
             {wikiLoading ? (
               <Skeleton className="h-64 w-full" />
             ) : wikiMarkdown ? (
               <WikiMarkdownContent content={wikiMarkdown} />
             ) : (
               <p className="text-sm text-muted-foreground">
-                No wiki content yet. Index member repositories to populate this view.
+                No wiki content yet. Index member repositories, then generate the application wiki.
               </p>
             )}
           </CardContent>
         </Card>
       )}
+
+      <ApplicationWikiGenerateDialog
+        open={wikiGenerateOpen}
+        applicationId={appId}
+        onOpenChange={setWikiGenerateOpen}
+        onCompleted={(result) => void onWikiGenerateCompleted(result)}
+      />
 
       {tab === 'readiness' && (
         <div className="space-y-4">

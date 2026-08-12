@@ -55,6 +55,18 @@ class WikiChatMessage(BaseModel):
     content: str = Field(..., min_length=1)
 
 
+class ApplicationWikiGenerateRequest(BaseModel):
+    """generate_now: enqueue app wiki immediately (partial members OK).
+    retry_incomplete_then_generate: re-index incomplete members; app wiki
+    auto-enqueues when every member is ready with a wiki site.
+    """
+
+    mode: str = Field(
+        default="generate_now",
+        description="generate_now | retry_incomplete_then_generate",
+    )
+
+
 class WikiChatRequest(BaseModel):
     messages: List[WikiChatMessage] = Field(..., min_length=1)
     top_k: int = Field(default=8, ge=1, le=20)
@@ -205,6 +217,29 @@ async def start_index(
 
     indexer = IndexerService(db)
     run = indexer.start_index(repo)
+    return indexer.to_status_dict(repo, run)
+
+
+@router.post("/repos/{repo_id}/index/cancel")
+async def cancel_index(
+    repo_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cancel a pending/running analysis and kill hung wiki CLI if present."""
+    require_intelligence(user, db)
+    ingestion = RepoIngestionService(db)
+    repo = ingestion.get_repository(user.tenant_id, repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    indexer = IndexerService(db)
+    run = indexer.cancel_index(repo)
+    if not run:
+        raise HTTPException(status_code=404, detail="No index run found")
+    if run.status not in ("failed",) and run.error != "Cancelled by user":
+        # cancel_index only acts on pending/running; otherwise return current status
+        pass
     return indexer.to_status_dict(repo, run)
 
 
@@ -865,14 +900,153 @@ async def application_wiki(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Synthesized application wiki composed from member repository wikis."""
+    """Application wiki: prefer generated multi-repo site; else synthesizer fallback."""
     require_intelligence(user, db)
+    from app.services.intelligence.analysis_storage import (
+        WIKI_MD_NAME,
+        get_application_analysis_dir,
+    )
     from app.services.intelligence.application_synthesizer import synthesize_application_wiki
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    svc = ApplicationWikiAgentService(db)
+    site = svc.get_wiki_site(application_id)
+    status = svc.get_status(user.tenant_id, application_id)
+    if site:
+        analysis_dir = get_application_analysis_dir(user.tenant_id, application_id)
+        md_path = analysis_dir / WIKI_MD_NAME
+        markdown = ""
+        if md_path.is_file():
+            markdown = md_path.read_text(encoding="utf-8")
+        elif site.summary_json:
+            from app.services.agents.wiki_agent import _compile_wiki_md
+
+            markdown = _compile_wiki_md(
+                site.summary_json,
+                site.title or "Application",
+            )
+        return {
+            "application_id": application_id,
+            "application_name": site.title,
+            "source": "generated",
+            "markdown": markdown,
+            "summary": site.summary_json,
+            "status": status,
+            "version": site.version,
+            "generated_by": site.generated_by,
+        }
 
     payload = synthesize_application_wiki(db, user.tenant_id, application_id)
     if not payload:
         raise HTTPException(status_code=404, detail="Application not found")
+    payload["source"] = "synthesized"
+    payload["status"] = status
     return payload
+
+
+@router.get("/applications/{application_id}/wiki/status")
+async def application_wiki_status(
+    application_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_intelligence(user, db)
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    return ApplicationWikiAgentService(db).get_status(user.tenant_id, application_id)
+
+
+@router.post("/applications/{application_id}/wiki/generate")
+async def application_wiki_generate(
+    application_id: str,
+    body: Optional[ApplicationWikiGenerateRequest] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Enqueue app wiki now, or retry incomplete member repos first.
+
+    Modes:
+    - generate_now: schedule multi-repo wiki immediately (clones what it can).
+    - retry_incomplete_then_generate: re-index members missing ready wiki;
+      application wiki auto-enqueues when all members become ready.
+    """
+    require_intelligence(user, db)
+    from app.core.database import Application
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+    from app.services.savi_job_queue import schedule_application_wiki
+
+    app = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.tenant_id == user.tenant_id)
+        .first()
+    )
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    req = body or ApplicationWikiGenerateRequest()
+    mode = (req.mode or "generate_now").strip().lower()
+    if mode not in ("generate_now", "retry_incomplete_then_generate"):
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be generate_now or retry_incomplete_then_generate",
+        )
+
+    svc = ApplicationWikiAgentService(db)
+    readiness = svc.member_wiki_readiness(user.tenant_id, application_id)
+
+    if mode == "retry_incomplete_then_generate":
+        if readiness["all_ready"]:
+            queued = schedule_application_wiki(user.tenant_id, application_id)
+            return {
+                "ok": True,
+                "application_id": application_id,
+                "mode": mode,
+                "queued": queued,
+                "deferred": False,
+                "member_readiness": readiness,
+                "message": "All member wikis ready — application wiki queued.",
+            }
+        prep = svc.start_incomplete_member_indexes(user.tenant_id, application_id)
+        return {
+            "ok": True,
+            "application_id": application_id,
+            "mode": mode,
+            "queued": False,
+            "deferred": True,
+            "started": prep["started"],
+            "skipped": prep["skipped"],
+            "member_readiness": readiness,
+            "message": (
+                f"Queued analysis for {len(prep['started'])} incomplete "
+                f"repo(s). Application wiki will generate automatically when "
+                f"all {readiness['total_count']} members are ready."
+            ),
+        }
+
+    queued = schedule_application_wiki(user.tenant_id, application_id)
+    return {
+        "ok": True,
+        "application_id": application_id,
+        "mode": mode,
+        "queued": queued,
+        "deferred": False,
+        "member_readiness": readiness,
+        "message": (
+            "Application wiki queued."
+            if readiness["all_ready"]
+            else (
+                f"Application wiki queued with {readiness['ready_count']}/"
+                f"{readiness['total_count']} member wikis ready "
+                f"({readiness['incomplete_count']} incomplete)."
+            )
+        ),
+    }
 
 
 @router.get("/applications/{application_id}/wiki-site")
@@ -883,6 +1057,23 @@ async def application_wiki_site_meta(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_synthesizer import synthesize_application_wiki
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    svc = ApplicationWikiAgentService(db)
+    site = svc.get_wiki_site(application_id)
+    status = svc.get_status(user.tenant_id, application_id)
+    if site:
+        return {
+            "application_id": application_id,
+            "title": site.title,
+            "has_html": True,
+            "source": "generated",
+            "version": site.version,
+            "generated_by": site.generated_by,
+            "status": status,
+        }
 
     payload = synthesize_application_wiki(db, user.tenant_id, application_id)
     if not payload:
@@ -894,6 +1085,8 @@ async def application_wiki_site_meta(
         "has_html": True,
         "cached": payload.get("cached", False),
         "members": payload.get("members", []),
+        "source": "synthesized",
+        "status": status,
     }
 
 
@@ -905,6 +1098,13 @@ async def application_wiki_site_html(
 ):
     require_intelligence(user, db)
     from app.services.intelligence.application_synthesizer import synthesize_application_wiki_html
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    site = ApplicationWikiAgentService(db).get_wiki_site(application_id)
+    if site and site.html_content:
+        return HTMLResponse(content=site.html_content)
 
     html_doc = synthesize_application_wiki_html(db, user.tenant_id, application_id)
     if not html_doc:

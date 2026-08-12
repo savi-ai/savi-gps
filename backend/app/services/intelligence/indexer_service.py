@@ -42,6 +42,73 @@ class IndexerService:
 
         return run
 
+    def cancel_index(self, repository: Repository) -> Optional[IndexRun]:
+        """Cancel pending/running index; kill wiki CLI process group if present."""
+        run = self.get_latest_run(repository.id)
+        if not run or run.status not in ("pending", "running"):
+            return run
+
+        run.status = "failed"
+        run.error = "Cancelled by user"
+        run.completed_at = datetime.now()
+        repository.status = "error"
+        repository.last_index_error = "Analysis cancelled by user"
+        self.db.commit()
+
+        try:
+            from app.services.intelligence.analysis_storage import get_analysis_dir, mark_failed
+
+            analysis_dir = get_analysis_dir(repository)
+            pid_file = analysis_dir / "WIKI_CLI_PID"
+            if pid_file.is_file():
+                try:
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    from app.services.agents.wiki_agent import WikiAgent
+
+                    WikiAgent._kill_process_group(pid)
+                    pid_file.unlink(missing_ok=True)
+                except (ValueError, OSError) as e:
+                    logger.warning("Could not kill wiki CLI pid for cancel: %s", e)
+            mark_failed(analysis_dir, "Cancelled by user")
+        except Exception as e:
+            logger.warning("Cancel cleanup failed for %s: %s", repository.id, e)
+
+        logger.info("Cancelled index run %s for repository %s", run.id, repository.id)
+        return run
+
+    def reclaim_orphaned_runs(self) -> int:
+        """Mark in-flight runs as failed after worker/process restart (no live CLI).
+
+        The in-process worker only picks ``pending`` runs. A crash/reload leaves
+        ``running`` rows forever at e.g. 85% wiki — reclaim them so UI can Retry.
+        """
+        orphans = (
+            self.db.query(IndexRun)
+            .filter(IndexRun.status == "running")
+            .all()
+        )
+        count = 0
+        for run in orphans:
+            run.status = "failed"
+            run.error = (
+                "Analysis interrupted (server restart or worker lost). "
+                "Click Retry to run again."
+            )[:2000]
+            run.completed_at = datetime.now()
+            repo = (
+                self.db.query(Repository)
+                .filter(Repository.id == run.repository_id)
+                .first()
+            )
+            if repo and repo.status == "indexing":
+                repo.status = "error"
+                repo.last_index_error = run.error
+            count += 1
+            logger.warning("Reclaimed orphaned index run %s", run.id)
+        if count:
+            self.db.commit()
+        return count
+
     def get_latest_run(self, repository_id: str) -> Optional[IndexRun]:
         return (
             self.db.query(IndexRun)
@@ -238,6 +305,15 @@ class IndexerService:
                     assess_err,
                 )
 
+            try:
+                self._maybe_enqueue_application_wiki(repository)
+            except Exception as app_wiki_err:
+                logger.warning(
+                    "Optional application wiki enqueue after index failed for %s: %s",
+                    repository.id,
+                    app_wiki_err,
+                )
+
         except Exception as e:
             logger.error(f"Index run {run.id} failed: {e}")
             run.status = "failed"
@@ -249,6 +325,34 @@ class IndexerService:
         finally:
             if clone_path:
                 clone_svc.cleanup(clone_path)
+
+    def _maybe_enqueue_application_wiki(self, repository: Repository) -> None:
+        """When all application members are ready with wikis, enqueue app wiki regen."""
+        from app.core.database import ApplicationRepository
+        from app.services.intelligence.application_wiki_agent_service import (
+            ApplicationWikiAgentService,
+        )
+        from app.services.savi_job_queue import schedule_application_wiki
+
+        membership = (
+            self.db.query(ApplicationRepository)
+            .filter(ApplicationRepository.repository_id == repository.id)
+            .first()
+        )
+        if not membership:
+            return
+
+        app_svc = ApplicationWikiAgentService(self.db)
+        if not app_svc.members_ready_for_app_wiki(
+            repository.tenant_id, membership.application_id
+        ):
+            return
+
+        logger.info(
+            "All members ready — scheduling application wiki for %s",
+            membership.application_id,
+        )
+        schedule_application_wiki(repository.tenant_id, membership.application_id)
 
     def to_status_dict(self, repository: Repository, run: Optional[IndexRun]) -> Dict[str, Any]:
         chunk_count = (

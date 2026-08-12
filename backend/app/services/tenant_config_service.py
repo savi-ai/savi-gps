@@ -379,6 +379,7 @@ class TenantConfigService:
         llm_settings = {
             **self.get_llm_settings(config.tenant_id),
             "wiki_github_export_path": settings.WIKI_GITHUB_EXPORT_PATH,
+            "wiki_app_github_export_path": settings.WIKI_APP_GITHUB_EXPORT_PATH,
         }
         return {
             "tenant_id": config.tenant_id,
