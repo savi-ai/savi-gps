@@ -409,13 +409,18 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             llm_provider = "claude"
         llm_model = gen_settings.get("llm_model")
 
-        # Application wiki prefers API (multi-repo prompt). CLI-only tenants still try API
-        # unless explicitly github_copilot CLI — then we attempt shell on workspace root.
-        allow_api = generation_mode in ("api", "auto", "cli") and not (
-            uses_copilot_cli and generation_mode == "cli"
+        # Application wiki is multi-repo. Copilot/Claude CLI routinely hangs on the
+        # workspace root (hour-long timeout, no artifacts). Always use the LLM API
+        # here; tenant CLI mode still applies to per-repo wikis during indexing.
+        agent_cli = gen_settings.get("agent_cli") or (
+            "copilot" if uses_copilot_cli else "claude"
         )
-        if uses_copilot_cli and generation_mode != "cli":
-            allow_api = True
+        if uses_copilot_cli or generation_mode == "cli":
+            logger.info(
+                "Application wiki skipping CLI (mode=%s provider=%s) — using LLM API",
+                generation_mode,
+                wiki_provider,
+            )
 
         shell_invoked = False
         shell_succeeded = False
@@ -424,36 +429,7 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         wiki_html = None
         wiki_md = None
 
-        agent_cli = gen_settings.get("agent_cli") or (
-            "copilot" if uses_copilot_cli else "claude"
-        )
-        if uses_copilot_cli and generation_mode in ("cli", "auto"):
-            shell_invoked = True
-            shell_result = await self._run_shell_agent(
-                org_name="application",
-                repo_slug="".join(
-                    c if c.isalnum() or c in "-_" else "_" for c in app_name
-                )[:80]
-                or "application",
-                clone_path=str(workspace_path),
-                output_dir=output_dir,
-                attribute_definitions=[],
-                agent_cli=agent_cli,
-            )
-            if shell_result and shell_result.get("wiki_json"):
-                shell_succeeded = True
-                generation_source = f"wiki_agent_shell_application:{agent_cli}"
-                wiki_json = shell_result["wiki_json"]
-                wiki_html = shell_result.get("wiki_html")
-                wiki_md = shell_result.get("wiki_md")
-            elif generation_mode == "cli" and uses_copilot_cli:
-                detail = (shell_result or {}).get("error") or "unknown CLI failure"
-                err = f"Application wiki CLI failed (AGENT_CLI={agent_cli}): {detail}"
-                logger.error(redact_secrets(err))
-                mark_failed(output_dir, redact_secrets(err)[:4000])
-                raise RuntimeError(err)
-
-        if not wiki_json and allow_api:
+        if not wiki_json:
             try:
                 wiki_json = await self._generate_application_via_llm(
                     app_name=app_name,
@@ -467,10 +443,6 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 generation_source = f"wiki_agent_llm_application:{llm_provider}"
             except Exception as e:
                 logger.error("Application WikiAgent LLM failed: %s", redact_secrets(str(e)))
-                if generation_mode == "api" or uses_copilot_cli:
-                    mark_failed(output_dir, redact_secrets(str(e))[:4000])
-                    raise
-                mark_failed(output_dir, redact_secrets(str(e))[:4000])
                 wiki_json = self._fallback_application_json(
                     app_name, manifest, service_map_mermaid
                 )

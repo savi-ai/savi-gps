@@ -130,6 +130,7 @@ export default function ApplicationDetailPage() {
   const [wikiSource, setWikiSource] = useState<string | null>(null)
   const [wikiStatus, setWikiStatus] = useState<string | null>(null)
   const [wikiGenerating, setWikiGenerating] = useState(false)
+  const [wikiCancelling, setWikiCancelling] = useState(false)
   const [wikiGenerateOpen, setWikiGenerateOpen] = useState(false)
   const [wikiBanner, setWikiBanner] = useState<string | null>(null)
   const [memberReadiness, setMemberReadiness] = useState<MemberReadinessSummary | null>(null)
@@ -166,22 +167,28 @@ export default function ApplicationDetailPage() {
     load()
   }, [hasCapability, router, load])
 
+  const refreshWikiStatus = useCallback(async () => {
+    const [wikiRes, statusRes] = await Promise.all([
+      apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`).catch(() => null),
+      apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki/status`).catch(() => null),
+    ])
+    if (wikiRes?.data) {
+      setWikiMarkdown(wikiRes.data.markdown || '')
+      setWikiSource(wikiRes.data.source || null)
+    }
+    const st = statusRes?.data?.status || wikiRes?.data?.status?.status || null
+    setWikiStatus(st)
+    setMemberReadiness(statusRes?.data?.member_readiness || null)
+    return st
+  }, [appId])
+
   useEffect(() => {
     if (tab !== 'wiki' || !appId) return
     let cancelled = false
     const loadWiki = async () => {
       setWikiLoading(true)
       try {
-        const [wikiRes, statusRes] = await Promise.all([
-          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`),
-          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki/status`).catch(() => null),
-        ])
-        if (!cancelled) {
-          setWikiMarkdown(wikiRes.data?.markdown || '')
-          setWikiSource(wikiRes.data?.source || null)
-          setWikiStatus(statusRes?.data?.status || wikiRes.data?.status?.status || null)
-          setMemberReadiness(statusRes?.data?.member_readiness || null)
-        }
+        await refreshWikiStatus()
       } catch {
         if (!cancelled) {
           setWikiMarkdown(null)
@@ -195,24 +202,22 @@ export default function ApplicationDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [tab, appId])
+  }, [tab, appId, refreshWikiStatus])
+
+  useEffect(() => {
+    if (tab !== 'wiki' || wikiStatus !== 'running') return
+    const t = setInterval(() => {
+      void refreshWikiStatus()
+    }, 4000)
+    return () => clearInterval(t)
+  }, [tab, wikiStatus, refreshWikiStatus])
 
   const pollAppWikiUntilDone = async () => {
     setWikiStatus('running')
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 90; i++) {
       await new Promise((r) => setTimeout(r, 2000))
-      const statusRes = await apiClient.get(
-        `/api/v1/intelligence/applications/${appId}/wiki/status`
-      )
-      const st = statusRes.data?.status
-      setWikiStatus(st || null)
-      setMemberReadiness(statusRes.data?.member_readiness || null)
-      if (st === 'completed' || st === 'failed') {
-        const wikiRes = await apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`)
-        setWikiMarkdown(wikiRes.data?.markdown || '')
-        setWikiSource(wikiRes.data?.source || null)
-        break
-      }
+      const st = await refreshWikiStatus()
+      if (st === 'completed' || st === 'failed') break
     }
   }
 
@@ -237,6 +242,24 @@ export default function ApplicationDetailPage() {
       setWikiStatus('failed')
     } finally {
       setWikiGenerating(false)
+    }
+  }
+
+  const cancelAppWiki = async () => {
+    if (!appId) return
+    setWikiCancelling(true)
+    try {
+      await apiClient.post(`/api/v1/intelligence/applications/${appId}/wiki/cancel`)
+      await refreshWikiStatus()
+      setWikiBanner('Application wiki cancelled. You can Generate again (uses API, not Copilot CLI).')
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setWikiBanner(detail || 'Failed to cancel application wiki')
+    } finally {
+      setWikiCancelling(false)
     }
   }
 
@@ -552,10 +575,21 @@ export default function ApplicationDetailPage() {
               )}
             </div>
             <div className="flex shrink-0 gap-2">
+              {wikiStatus === 'running' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={wikiCancelling}
+                  onClick={() => void cancelAppWiki()}
+                >
+                  {wikiCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Cancel
+                </Button>
+              )}
               <Button
                 variant="default"
                 size="sm"
-                disabled={wikiGenerating || wikiStatus === 'running'}
+                disabled={wikiGenerating || wikiStatus === 'running' || wikiCancelling}
                 onClick={() => {
                   setWikiBanner(null)
                   setWikiGenerateOpen(true)

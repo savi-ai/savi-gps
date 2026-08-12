@@ -25,6 +25,13 @@ async def _index_worker_loop() -> None:
         n = IndexerService(db).reclaim_orphaned_runs()
         if n:
             logger.info("Reclaimed %s orphaned index run(s) on worker start", n)
+        from app.services.intelligence.application_wiki_agent_service import (
+            ApplicationWikiAgentService,
+        )
+
+        n_app = ApplicationWikiAgentService(db).reclaim_orphaned_application_wikis()
+        if n_app:
+            logger.info("Reclaimed %s orphaned application wiki run(s) on worker start", n_app)
     except Exception as e:
         logger.warning("Orphan reclaim failed: %s", e)
     finally:

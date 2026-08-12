@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime
@@ -59,6 +60,67 @@ class ApplicationWikiAgentService:
             "generated_by": site.generated_by if site else None,
             "member_readiness": readiness,
         }
+
+    def cancel_generation(self, tenant_id: str, application_id: str) -> Dict[str, Any]:
+        """Kill hung wiki CLI (if any) and mark application wiki as failed."""
+        analysis_dir = get_application_analysis_dir(tenant_id, application_id)
+        pid_file = analysis_dir / "WIKI_CLI_PID"
+        if pid_file.is_file():
+            try:
+                pid = int(pid_file.read_text(encoding="utf-8").strip())
+                WikiAgent._kill_process_group(pid)
+            except (ValueError, OSError) as e:
+                logger.warning("Could not kill application wiki CLI pid: %s", e)
+            try:
+                pid_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        mark_failed(analysis_dir, "Cancelled by user")
+        logger.info("Cancelled application wiki for %s", application_id)
+        return self.get_status(tenant_id, application_id)
+
+    def reclaim_orphaned_application_wikis(self) -> int:
+        """Mark in-flight app wiki runs failed after worker/process restart."""
+        count = 0
+        apps = self.db.query(Application).all()
+        for app in apps:
+            analysis_dir = get_application_analysis_dir(app.tenant_id, app.id)
+            started = analysis_dir / "WIKI_STARTED"
+            if not started.is_file():
+                continue
+            if (analysis_dir / "WIKI_COMPLETED").is_file():
+                continue
+            pid_file = analysis_dir / "WIKI_CLI_PID"
+            if pid_file.is_file():
+                try:
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    WikiAgent._kill_process_group(pid)
+                except (ValueError, OSError) as e:
+                    logger.warning(
+                        "Could not kill orphaned application wiki CLI for %s: %s",
+                        app.id,
+                        e,
+                    )
+                try:
+                    pid_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            mark_failed(
+                analysis_dir,
+                "Application wiki interrupted (server restart or worker lost). "
+                "Click Generate to run again.",
+            )
+            count += 1
+            logger.warning("Reclaimed orphaned application wiki for %s", app.id)
+        return count
+
+    @staticmethod
+    def _pid_is_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
     def member_wiki_readiness(
         self, tenant_id: str, application_id: str
@@ -343,17 +405,34 @@ class ApplicationWikiAgentService:
 
         started = analysis_dir / "WIKI_STARTED"
         if started.is_file() and not (analysis_dir / "WIKI_FAILED").is_file():
+            pid_file = analysis_dir / "WIKI_CLI_PID"
+            pid_alive = False
+            if pid_file.is_file():
+                try:
+                    pid_alive = self._pid_is_alive(int(pid_file.read_text(encoding="utf-8").strip()))
+                except (ValueError, OSError):
+                    pid_alive = False
             try:
                 age = datetime.now().timestamp() - started.stat().st_mtime
-                if age < 7200:
-                    return {
-                        "ok": False,
-                        "skipped": True,
-                        "reason": "already_running",
-                        "status": self.get_status(tenant_id, application_id),
-                    }
             except OSError:
-                pass
+                age = 0
+            # Live CLI or a recent API run still in-process — don't start another.
+            if pid_alive or (not pid_file.is_file() and age < 900):
+                return {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "already_running",
+                    "status": self.get_status(tenant_id, application_id),
+                }
+            if pid_file.is_file() and not pid_alive:
+                try:
+                    pid_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            mark_failed(
+                analysis_dir,
+                "Previous application wiki run lost (no live process). Retrying.",
+            )
 
         workspace_info: Optional[Dict[str, Any]] = None
         try:

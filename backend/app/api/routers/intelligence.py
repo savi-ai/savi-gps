@@ -1049,6 +1049,32 @@ async def application_wiki_generate(
     }
 
 
+@router.post("/applications/{application_id}/wiki/cancel")
+async def application_wiki_cancel(
+    application_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cancel a running application wiki (kills hung CLI if present)."""
+    require_intelligence(user, db)
+    from app.core.database import Application
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    app = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.tenant_id == user.tenant_id)
+        .first()
+    )
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    return ApplicationWikiAgentService(db).cancel_generation(
+        user.tenant_id, application_id
+    )
+
+
 @router.get("/applications/{application_id}/wiki-site")
 async def application_wiki_site_meta(
     application_id: str,

@@ -20,6 +20,7 @@ export default function ApplicationWikiSitePage() {
   const [status, setStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
 
@@ -52,9 +53,26 @@ export default function ApplicationWikiSitePage() {
     load()
   }, [appId, hasCapability, router])
 
+  useEffect(() => {
+    if (status !== 'running') return
+    const t = setInterval(async () => {
+      try {
+        const statusRes = await apiClient.get(
+          `/api/v1/intelligence/applications/${appId}/wiki/status`
+        )
+        const st = statusRes.data?.status
+        setStatus(st || null)
+        if (st === 'completed' || st === 'failed') await load()
+      } catch {
+        /* ignore poll errors */
+      }
+    }, 4000)
+    return () => clearInterval(t)
+  }, [status, appId])
+
   const pollUntilDone = async () => {
     setStatus('running')
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 90; i++) {
       await new Promise((r) => setTimeout(r, 2000))
       const statusRes = await apiClient.get(
         `/api/v1/intelligence/applications/${appId}/wiki/status`
@@ -65,6 +83,19 @@ export default function ApplicationWikiSitePage() {
         await load()
         break
       }
+    }
+  }
+
+  const cancelWiki = async () => {
+    setCancelling(true)
+    try {
+      await apiClient.post(`/api/v1/intelligence/applications/${appId}/wiki/cancel`)
+      setStatus('failed')
+      setBanner('Application wiki cancelled. Generate again to use the API path.')
+    } catch {
+      setBanner('Failed to cancel application wiki')
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -97,14 +128,20 @@ export default function ApplicationWikiSitePage() {
         </p>
         {banner && <p className="mx-auto max-w-md text-sm text-foreground">{banner}</p>}
         <div className="flex justify-center gap-2">
+          {status === 'running' && (
+            <Button variant="outline" onClick={() => void cancelWiki()} disabled={cancelling}>
+              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Cancel
+            </Button>
+          )}
           <Button
             onClick={() => {
               setBanner(null)
               setGenerateOpen(true)
             }}
-            disabled={generating}
+            disabled={generating || status === 'running' || cancelling}
           >
-            {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {generating || status === 'running' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Generate application wiki
           </Button>
           <Button variant="link" onClick={() => router.push(`/dashboard/intelligence/applications/${appId}`)}>
@@ -138,7 +175,13 @@ export default function ApplicationWikiSitePage() {
         <span className="text-sm font-medium">{title}</span>
         <span className="text-xs text-muted-foreground">{label}</span>
         {status && <span className="text-xs text-muted-foreground">· {status}</span>}
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-2">
+          {status === 'running' && (
+            <Button size="sm" variant="outline" onClick={() => void cancelWiki()} disabled={cancelling}>
+              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Cancel
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -146,7 +189,7 @@ export default function ApplicationWikiSitePage() {
               setBanner(null)
               setGenerateOpen(true)
             }}
-            disabled={generating || status === 'running'}
+            disabled={generating || status === 'running' || cancelling}
           >
             {generating || status === 'running' ? (
               <Loader2 className="h-4 w-4 animate-spin" />
