@@ -97,11 +97,50 @@ def get_analysis_views_dir(repository: Repository) -> Path:
     return get_analysis_dir(repository) / VIEWS_DIR_NAME
 
 
-def get_application_analysis_dir(tenant_id: str, application_id: str) -> Path:
-    """Application-scoped analysis artifacts (service map, …)."""
+def get_application_root(tenant_id: str, application_id: str) -> Path:
+    """Root for application-scoped storage: tenants/{tid}/applications/{aid}/."""
     tid = sanitize_path_segment(tenant_id or "unknown-tenant")
     aid = sanitize_path_segment(application_id)
-    return get_storage_root() / "tenants" / tid / "applications" / aid / "analysis"
+    return get_storage_root() / "tenants" / tid / "applications" / aid
+
+
+def get_application_analysis_dir(tenant_id: str, application_id: str) -> Path:
+    """Application-scoped analysis artifacts (service map, wiki, …)."""
+    return get_application_root(tenant_id, application_id) / "analysis"
+
+
+def get_application_workspace_dir(tenant_id: str, application_id: str) -> Path:
+    """Multi-repo clone root for application wiki generation."""
+    return get_application_root(tenant_id, application_id) / "workspace"
+
+
+def get_application_workspace_repos_dir(tenant_id: str, application_id: str) -> Path:
+    """Member clones live under workspace/repos/{slug}/."""
+    return get_application_workspace_dir(tenant_id, application_id) / "repos"
+
+
+def get_application_wiki_status(tenant_id: str, application_id: str) -> Dict[str, Any]:
+    """Return wiki marker status for an application analysis dir."""
+    analysis_dir = get_application_analysis_dir(tenant_id, application_id)
+    status = "idle"
+    detail = ""
+    if (analysis_dir / "WIKI_STARTED").is_file():
+        status = "running"
+        detail = (analysis_dir / "WIKI_STARTED").read_text(encoding="utf-8").strip()
+    elif (analysis_dir / "WIKI_FAILED").is_file():
+        status = "failed"
+        detail = (analysis_dir / "WIKI_FAILED").read_text(encoding="utf-8").strip()
+    elif (analysis_dir / "WIKI_COMPLETED").is_file():
+        status = "completed"
+        detail = (analysis_dir / "WIKI_COMPLETED").read_text(encoding="utf-8").strip()
+    return {
+        "status": status,
+        "detail": detail,
+        "analysis_dir": str(analysis_dir),
+        "has_wiki_json": (analysis_dir / WIKI_JSON_NAME).is_file(),
+        "has_wiki_html": (analysis_dir / WIKI_HTML_NAME).is_file(),
+        "has_wiki_md": (analysis_dir / WIKI_MD_NAME).is_file(),
+    }
 
 
 def _dir_has_artifacts(path: Path) -> bool:

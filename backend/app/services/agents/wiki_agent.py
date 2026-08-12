@@ -30,6 +30,9 @@ from app.services.intelligence.wiki_generation_settings import resolve_wiki_gene
 DEEP_WIKI_PROMPT_PATH = (
     Path(__file__).resolve().parents[2] / "prompts" / "wiki_deep_analysis.txt"
 )
+APP_WIKI_PROMPT_PATH = (
+    Path(__file__).resolve().parents[2] / "prompts" / "wiki_application_deep_analysis.txt"
+)
 
 IMPL_NAME_MARKERS = (
     "impl", "service", "logic", "manager", "handler", "usecase", "use_case", "processor",
@@ -70,11 +73,27 @@ def _load_deep_wiki_prompt() -> str:
     return ""
 
 
+def _load_application_wiki_prompt() -> str:
+    if APP_WIKI_PROMPT_PATH.is_file():
+        return APP_WIKI_PROMPT_PATH.read_text(encoding="utf-8")
+    return ""
+
+
 def _compile_wiki_md(wiki_json: Dict[str, Any], repo_name: str) -> str:
     sections = wiki_json.get("sections_md") or {}
     order = (
-        "overview", "architecture", "business_logic", "api_surface",
-        "data_flow", "e2e_flow", "database", "build_deploy",
+        "overview",
+        "components",
+        "integration",
+        "dependencies",
+        "service_map",
+        "architecture",
+        "business_logic",
+        "api_surface",
+        "data_flow",
+        "e2e_flow",
+        "database",
+        "build_deploy",
     )
     parts: List[str] = []
     for key in order:
@@ -85,11 +104,17 @@ def _compile_wiki_md(wiki_json: Dict[str, Any], repo_name: str) -> str:
     if not parts:
         bl = wiki_json.get("business_logic_layer") or {}
         overview = wiki_json.get("overview", {})
-        parts.append(f"# {repo_name}\n\n{overview.get('description', '')}")
+        title = wiki_json.get("application_name") or repo_name
+        parts.append(f"# {title}\n\n{overview.get('description', '')}")
         if bl.get("summary"):
-            parts.append(f"# Business Logic Layer\n\n{bl['summary']}")
+            parts.append(f"# Components\n\n{bl['summary']}")
         for comp in bl.get("components") or []:
             parts.append(f"## {comp.get('name', 'Component')}\n\n{comp.get('purpose', '')}")
+        integration = wiki_json.get("integration") or {}
+        if isinstance(integration, dict) and integration.get("summary"):
+            parts.append(f"# Integration\n\n{integration['summary']}")
+        elif isinstance(integration, str) and integration.strip():
+            parts.append(f"# Integration\n\n{integration}")
 
     return "\n\n".join(parts) if parts else f"# {repo_name}\n\nWiki content pending deep analysis.\n"
 
@@ -212,11 +237,30 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             )
             if shell_result and shell_result.get("wiki_json"):
                 shell_succeeded = True
-                generation_source = f"wiki_agent_shell:{agent_cli}"
+                if shell_result.get("recovered_partial"):
+                    generation_source = f"wiki_agent_shell_partial:{agent_cli}"
+                else:
+                    generation_source = f"wiki_agent_shell:{agent_cli}"
                 wiki_json = shell_result["wiki_json"]
                 wiki_html = shell_result.get("wiki_html")
                 wiki_md = shell_result.get("wiki_md")
-            elif generation_mode == "cli" or uses_copilot_cli:
+            elif generation_mode == "cli":
+                # Strict CLI mode: no API fallback. Partial recovery already attempted.
+                detail = (shell_result or {}).get("error") or "unknown CLI failure"
+                err = (
+                    f"Wiki CLI generation failed (AGENT_CLI={agent_cli}): {detail}"
+                )
+                logger.error(redact_secrets(err))
+                mark_failed(output_dir, redact_secrets(err)[:4000])
+                raise RuntimeError(err)
+            elif uses_copilot_cli and generation_mode == "auto":
+                # Copilot CLI timed out / failed — fall through to API with llm_provider
+                logger.warning(
+                    "Copilot CLI wiki failed (%s); falling back to API (%s)",
+                    (shell_result or {}).get("error", "unknown")[:200],
+                    llm_provider,
+                )
+            elif uses_copilot_cli:
                 detail = (shell_result or {}).get("error") or "unknown CLI failure"
                 err = (
                     f"Wiki CLI generation failed (AGENT_CLI={agent_cli}): {detail}"
@@ -225,7 +269,12 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 mark_failed(output_dir, redact_secrets(err)[:4000])
                 raise RuntimeError(err)
 
-        if not wiki_json and allow_api:
+        # After CLI failure in auto mode, allow API even when provider was Copilot
+        allow_api_after_cli = (
+            generation_mode == "auto" and shell_invoked and not shell_succeeded
+        )
+
+        if not wiki_json and (allow_api or allow_api_after_cli):
             if shell_invoked and not shell_succeeded:
                 logger.warning(
                     "wiki_agent.sh did not produce artifacts in %s — using LLM API (%s)",
@@ -327,6 +376,384 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         state["wiki_refresh_reason"] = refresh_reason
         return state
 
+    async def process_application(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate an application-level wiki from a multi-repo workspace."""
+        application = state.get("application") or {}
+        workspace_path = state.get("workspace_path")
+        output_dir: Optional[Path] = state.get("output_dir")
+        application_id = state.get("application_id")
+        manifest = state.get("manifest") or {}
+        service_map_mermaid = state.get("service_map_mermaid") or ""
+
+        if not workspace_path:
+            raise ValueError("workspace_path is required for application wiki")
+        if output_dir is None:
+            raise ValueError("output_dir (analysis directory) is required")
+
+        output_dir = Path(output_dir)
+        mark_started(output_dir)
+
+        app_name = application.get("name") or "Application"
+        gen_settings = state.get("wiki_generation_settings") or resolve_wiki_generation_settings()
+        generation_mode = gen_settings.get("wiki_generation_mode") or "auto"
+        wiki_provider = (
+            gen_settings.get("wiki_generation_provider")
+            or gen_settings.get("llm_provider")
+            or settings.LLM_PROVIDER
+        )
+        uses_copilot_cli = bool(gen_settings.get("uses_copilot_cli")) or (
+            wiki_provider == "github_copilot"
+        )
+        llm_provider = gen_settings.get("llm_provider") or settings.LLM_PROVIDER
+        if llm_provider == "github_copilot":
+            llm_provider = "claude"
+        llm_model = gen_settings.get("llm_model")
+
+        # Application wiki prefers API (multi-repo prompt). CLI-only tenants still try API
+        # unless explicitly github_copilot CLI — then we attempt shell on workspace root.
+        allow_api = generation_mode in ("api", "auto", "cli") and not (
+            uses_copilot_cli and generation_mode == "cli"
+        )
+        if uses_copilot_cli and generation_mode != "cli":
+            allow_api = True
+
+        shell_invoked = False
+        shell_succeeded = False
+        generation_source = "wiki_agent_application_fallback"
+        wiki_json = None
+        wiki_html = None
+        wiki_md = None
+
+        agent_cli = gen_settings.get("agent_cli") or (
+            "copilot" if uses_copilot_cli else "claude"
+        )
+        if uses_copilot_cli and generation_mode in ("cli", "auto"):
+            shell_invoked = True
+            shell_result = await self._run_shell_agent(
+                org_name="application",
+                repo_slug="".join(
+                    c if c.isalnum() or c in "-_" else "_" for c in app_name
+                )[:80]
+                or "application",
+                clone_path=str(workspace_path),
+                output_dir=output_dir,
+                attribute_definitions=[],
+                agent_cli=agent_cli,
+            )
+            if shell_result and shell_result.get("wiki_json"):
+                shell_succeeded = True
+                generation_source = f"wiki_agent_shell_application:{agent_cli}"
+                wiki_json = shell_result["wiki_json"]
+                wiki_html = shell_result.get("wiki_html")
+                wiki_md = shell_result.get("wiki_md")
+            elif generation_mode == "cli" and uses_copilot_cli:
+                detail = (shell_result or {}).get("error") or "unknown CLI failure"
+                err = f"Application wiki CLI failed (AGENT_CLI={agent_cli}): {detail}"
+                logger.error(redact_secrets(err))
+                mark_failed(output_dir, redact_secrets(err)[:4000])
+                raise RuntimeError(err)
+
+        if not wiki_json and allow_api:
+            try:
+                wiki_json = await self._generate_application_via_llm(
+                    app_name=app_name,
+                    application=application,
+                    workspace_path=str(workspace_path),
+                    manifest=manifest,
+                    service_map_mermaid=service_map_mermaid,
+                    provider=llm_provider,
+                    model_id=llm_model,
+                )
+                generation_source = f"wiki_agent_llm_application:{llm_provider}"
+            except Exception as e:
+                logger.error("Application WikiAgent LLM failed: %s", redact_secrets(str(e)))
+                if generation_mode == "api" or uses_copilot_cli:
+                    mark_failed(output_dir, redact_secrets(str(e))[:4000])
+                    raise
+                mark_failed(output_dir, redact_secrets(str(e))[:4000])
+                wiki_json = self._fallback_application_json(
+                    app_name, manifest, service_map_mermaid
+                )
+                generation_source = "wiki_agent_application_fallback"
+
+        if not wiki_json:
+            wiki_json = self._fallback_application_json(
+                app_name, manifest, service_map_mermaid
+            )
+            generation_source = "wiki_agent_application_fallback"
+
+        wiki_json = sanitize_wiki_json_mermaid(wiki_json)
+        wiki_json.setdefault("application_name", app_name)
+        wiki_json.setdefault("repo_name", app_name)
+
+        # Map service_map_mermaid into diagrams for HTML builder compatibility
+        diagrams = wiki_json.setdefault("diagrams", {})
+        if service_map_mermaid and not diagrams.get("high_level_mermaid"):
+            diagrams["high_level_mermaid"] = service_map_mermaid
+        if diagrams.get("service_map_mermaid") and not diagrams.get("high_level_mermaid"):
+            diagrams["high_level_mermaid"] = diagrams["service_map_mermaid"]
+
+        # Surface components as business_logic_layer for HTML builder
+        if wiki_json.get("components") and not wiki_json.get("business_logic_layer"):
+            comps = wiki_json["components"]
+            if isinstance(comps, list):
+                wiki_json["business_logic_layer"] = {
+                    "summary": f"{len(comps)} application components",
+                    "components": [
+                        {
+                            "name": c.get("name") or c.get("repository_name") or "Component",
+                            "purpose": c.get("purpose") or c.get("role") or "",
+                            "source_files": c.get("source_files") or [],
+                            "workflows": c.get("workflows") or [],
+                            "business_rules": c.get("business_rules") or [],
+                        }
+                        for c in comps
+                        if isinstance(c, dict)
+                    ],
+                }
+
+        if not wiki_html:
+            wiki_html = build_wiki_html(
+                wiki_json,
+                repo_name=app_name,
+                repo_full_name=application.get("description") or app_name,
+                default_branch="application",
+                index_run_id=None,
+                loc=0,
+                file_count=len((manifest.get("members") or [])),
+            )
+
+        if not wiki_md:
+            wiki_md = _compile_wiki_md(wiki_json, app_name)
+        else:
+            from app.services.intelligence.mermaid_sanitize import degrade_mermaid_fences
+
+            wiki_md, _ = degrade_mermaid_fences(wiki_md)
+
+        paths = persist_analysis_artifacts(
+            output_dir,
+            wiki_json,
+            wiki_html,
+            wiki_md=wiki_md,
+            index_run_id=None,
+            generation_source=generation_source,
+            shell_invoked=shell_invoked,
+            shell_succeeded=shell_succeeded,
+            repository_id=None,
+            mark_complete=generation_source != "wiki_agent_application_fallback",
+            extra_meta={
+                "scope": "application",
+                "application_id": application_id,
+                "generation_mode": generation_mode,
+                "wiki_generation_provider": wiki_provider,
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "workspace_path": str(workspace_path),
+                "member_count": len(manifest.get("members") or []),
+            },
+        )
+
+        state["wiki_json"] = wiki_json
+        state["wiki_html"] = wiki_html
+        state["wiki_md"] = wiki_md
+        state["sections_md"] = wiki_json.get("sections_md", {})
+        state["generation_source"] = generation_source
+        state["shell_invoked"] = shell_invoked
+        state["shell_succeeded"] = shell_succeeded
+        state["analysis_paths"] = paths
+        return state
+
+    def _scan_application_workspace(
+        self,
+        workspace_path: str,
+        *,
+        max_files_per_repo: int = 60,
+        max_snippet_chars: int = 12000,
+    ) -> Dict[str, Any]:
+        """Collect file trees and light snippets from each member clone."""
+        root = Path(workspace_path)
+        repos_root = root / "repos"
+        members_out: List[Dict[str, Any]] = []
+        skip_dirs = {
+            ".git", "node_modules", "vendor", "dist", "build", ".next",
+            "__pycache__", ".venv", "venv", "target", "coverage",
+        }
+        exts = {
+            ".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".go", ".rs",
+            ".kt", ".cs", ".rb", ".md", ".yml", ".yaml", ".json", ".toml",
+            ".gradle", ".xml",
+        }
+
+        if not repos_root.is_dir():
+            return {"members": members_out}
+
+        for repo_dir in sorted(repos_root.iterdir()):
+            if not repo_dir.is_dir():
+                continue
+            files: List[str] = []
+            snippets: List[str] = []
+            total_snip = 0
+            for path in repo_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                if any(part in skip_dirs for part in path.parts):
+                    continue
+                if path.suffix.lower() not in exts and path.name not in (
+                    "Dockerfile", "Makefile", "README", "README.md",
+                ):
+                    continue
+                rel = path.relative_to(root).as_posix()
+                files.append(rel)
+                if len(files) > max_files_per_repo * 3:
+                    break
+                if total_snip < max_snippet_chars and (
+                    any(m in path.name.lower() for m in IMPL_NAME_MARKERS)
+                    or path.name.lower().startswith("readme")
+                    or any(
+                        seg in path.as_posix().lower()
+                        for seg in ("/service", "/api/", "/router", "/handler")
+                    )
+                ):
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="ignore")[:600]
+                    except OSError:
+                        continue
+                    block = f"### {rel}\n{text}\n"
+                    snippets.append(block)
+                    total_snip += len(block)
+
+            members_out.append({
+                "slug": repo_dir.name,
+                "files": files[:max_files_per_repo],
+                "snippets": "\n".join(snippets)[:max_snippet_chars],
+            })
+        return {"members": members_out}
+
+    async def _generate_application_via_llm(
+        self,
+        *,
+        app_name: str,
+        application: Dict[str, Any],
+        workspace_path: str,
+        manifest: Dict[str, Any],
+        service_map_mermaid: str,
+        provider: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from app.core.llm_client import get_llm_client
+
+        llm = get_llm_client(provider, model_id=model_id if provider == "bedrock" else None)
+        scan = self._scan_application_workspace(workspace_path)
+        app_rules = _load_application_wiki_prompt()
+        member_summaries = []
+        for m in scan.get("members") or []:
+            member_summaries.append(
+                f"## {m['slug']}\nFiles (sample): {m.get('files', [])[:40]}\n\n"
+                f"{m.get('snippets') or '(no snippets)'}\n"
+            )
+
+        prompt = f"""Analyze this multi-repository application workspace and return wiki JSON.
+
+{app_rules}
+
+Application: {app_name}
+Description: {application.get('description') or 'n/a'}
+Domain: {application.get('domain') or 'n/a'}
+
+MANIFEST.json:
+{json.dumps(manifest, indent=2)[:8000]}
+
+Existing service-map Mermaid (refine if needed; do not invent edges):
+{service_map_mermaid or '(none)'}
+
+Workspace member sources:
+{''.join(member_summaries)[:50000]}
+
+Return compact JSON only (no markdown fences) with keys:
+application_name, overview (description, purpose),
+components (list of {{name, repository_slug, role, purpose, tech_stack, key_apis}}),
+integration (summary, contracts),
+dependencies (list of {{from, to, type, evidence}}),
+diagrams (high_level_mermaid, service_map_mermaid, data_flow_mermaid, e2e_flow_mermaid),
+sections_md (overview, components, integration, dependencies, service_map, data_flow, build_deploy),
+tech_stack, build_deploy, data_flow.
+Keep strings under 500 characters where possible. Cite paths under repos/<slug>/.
+"""
+        response = await llm.generate(
+            prompt=prompt,
+            system_prompt=(
+                self.SYSTEM_PROMPT
+                + "\nYou are documenting an APPLICATION spanning multiple repositories."
+            ),
+            max_tokens=8192,
+            temperature=0.2,
+        )
+        try:
+            return _parse_llm_json(response)
+        except json.JSONDecodeError as first_err:
+            logger.warning(
+                "Application wiki JSON parse failed, retrying repair: %s", first_err
+            )
+            repair = await llm.generate(
+                prompt=(
+                    "Fix this into valid JSON only. Return the corrected JSON object, "
+                    "no markdown fences:\n\n" + response[:60000]
+                ),
+                system_prompt="Return strict valid JSON only.",
+                max_tokens=8192,
+                temperature=0,
+            )
+            return _parse_llm_json(repair)
+
+    def _fallback_application_json(
+        self,
+        app_name: str,
+        manifest: Dict[str, Any],
+        service_map_mermaid: str,
+    ) -> Dict[str, Any]:
+        members = manifest.get("members") or []
+        components = []
+        for m in members:
+            components.append({
+                "name": m.get("name") or m.get("slug") or "repo",
+                "repository_slug": m.get("slug"),
+                "role": m.get("role") or "",
+                "purpose": f"Member repository {m.get('name') or m.get('slug')}",
+            })
+        mermaid = service_map_mermaid or "graph TD\n  app[Application]\n"
+        if not service_map_mermaid:
+            for i, m in enumerate(components):
+                safe = f"c{i}"
+                mermaid += f"  app --> {safe}[{m['name']}]\n"
+        return {
+            "application_name": app_name,
+            "repo_name": app_name,
+            "overview": {
+                "description": (
+                    f"{app_name} groups {len(components)} repositories. "
+                    "Full multi-repo analysis was unavailable; this is a structural fallback."
+                ),
+            },
+            "components": components,
+            "integration": {
+                "summary": "Integration details pending full application wiki generation.",
+            },
+            "dependencies": [],
+            "diagrams": {
+                "high_level_mermaid": mermaid,
+                "service_map_mermaid": mermaid,
+            },
+            "sections_md": {
+                "overview": f"# Overview\n\n{app_name} application wiki (fallback).\n",
+                "components": "# Components\n\n"
+                + "\n".join(
+                    f"- **{c['name']}** ({c.get('role') or 'member'})" for c in components
+                )
+                + "\n",
+                "service_map": f"# Service Map\n\n```mermaid\n{mermaid}\n```\n",
+            },
+        }
+
     async def _run_shell_agent(
         self,
         org_name: str,
@@ -413,16 +840,73 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 repo_slug,
                 output_dir,
             )
-            # Critical: do not block uvicorn's event loop for long CLI runs
-            result = await asyncio.to_thread(
-                subprocess.run,
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-                cwd=str(backend_root),
-                env=env,
-            )
+            # Critical: do not block uvicorn's event loop for long CLI runs.
+            # Use a new session so timeout can kill the whole process group
+            # (bash + nested copilot/claude), not only the parent shell.
+            import signal
+
+            pid_file = output_dir / "WIKI_CLI_PID"
+
+            def _run_wiki_cli():
+                proc = subprocess.Popen(
+                    argv,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=str(backend_root),
+                    env=env,
+                    start_new_session=True,
+                )
+                try:
+                    pid_file.write_text(str(proc.pid), encoding="utf-8")
+                except OSError:
+                    pass
+                try:
+                    stdout, stderr = proc.communicate(timeout=timeout_s)
+                    return subprocess.CompletedProcess(
+                        argv, proc.returncode, stdout, stderr
+                    )
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "Wiki CLI timeout — killing process group pgid=%s (AGENT_CLI=%s)",
+                        proc.pid,
+                        agent_cli,
+                    )
+                    self._kill_process_group(proc.pid)
+                    try:
+                        stdout, stderr = proc.communicate(timeout=15)
+                    except Exception:
+                        stdout, stderr = "", ""
+                    raise subprocess.TimeoutExpired(
+                        argv, timeout_s, output=stdout, stderr=stderr
+                    )
+                finally:
+                    try:
+                        pid_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+            try:
+                result = await asyncio.to_thread(_run_wiki_cli)
+            except subprocess.TimeoutExpired as te:
+                err = (
+                    f"wiki_agent.sh timed out after {timeout_s}s (AGENT_CLI={agent_cli}; "
+                    f"process group killed. Raise WIKI_CLI_TIMEOUT_SECONDS if needed)"
+                )
+                logger.warning(err)
+                partial = self._load_partial_wiki_artifacts(output_dir)
+                if partial:
+                    logger.info(
+                        "Recovered partial wiki artifacts after CLI timeout in %s",
+                        output_dir,
+                    )
+                    partial["timed_out"] = True
+                    partial["error"] = err
+                    partial["recovered_partial"] = True
+                    return partial
+                mark_failed(output_dir, err)
+                return {"error": err, "timed_out": True}
+
             if result.stdout:
                 logger.info(
                     "wiki_agent.sh stdout (truncated): %s",
@@ -444,6 +928,16 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                     agent_cli,
                     err,
                 )
+                partial = self._load_partial_wiki_artifacts(output_dir)
+                if partial:
+                    logger.info(
+                        "Recovered partial wiki artifacts after CLI exit %s in %s",
+                        result.returncode,
+                        output_dir,
+                    )
+                    partial["error"] = err
+                    partial["recovered_partial"] = True
+                    return partial
                 mark_failed(output_dir, err)
                 return {"error": err}
 
@@ -462,20 +956,100 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             wiki_json = json.loads(json_path.read_text(encoding="utf-8"))
             wiki_html = html_path.read_text(encoding="utf-8") if html_path.is_file() else None
             wiki_md = md_path.read_text(encoding="utf-8") if md_path.is_file() else None
+            # CLI sometimes finishes JSON before HTML/MD — complete locally
+            if not wiki_html or not wiki_md:
+                completed = self._complete_wiki_artifacts_from_json(
+                    output_dir, wiki_json, repo_slug=repo_slug
+                )
+                wiki_html = wiki_html or completed.get("wiki_html")
+                wiki_md = wiki_md or completed.get("wiki_md")
             return {"wiki_json": wiki_json, "wiki_html": wiki_html, "wiki_md": wiki_md}
-        except subprocess.TimeoutExpired:
-            err = (
-                f"wiki_agent.sh timed out after {timeout_s}s (AGENT_CLI={agent_cli}; "
-                f"raise WIKI_CLI_TIMEOUT_SECONDS if needed)"
-            )
-            logger.warning(err)
-            mark_failed(output_dir, err)
-            return {"error": err}
         except (OSError, json.JSONDecodeError) as e:
             err = redact_secrets(str(e))
             logger.warning("Wiki shell agent error: %s", err)
             mark_failed(output_dir, err)
             return {"error": err}
+
+    @staticmethod
+    def _kill_process_group(pid: int) -> None:
+        """SIGTERM the process group, then SIGKILL if still alive."""
+        import signal
+        import time
+
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                return
+        time.sleep(3)
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+
+    def _complete_wiki_artifacts_from_json(
+        self,
+        output_dir: Path,
+        wiki_json: Dict[str, Any],
+        *,
+        repo_slug: str = "repository",
+    ) -> Dict[str, Any]:
+        """Build HTML/MD from structured JSON when CLI only wrote wiki_result.json."""
+        repo_name = wiki_json.get("repo_name") or repo_slug
+        overview = wiki_json.get("overview") or {}
+        wiki_html = build_wiki_html(
+            wiki_json,
+            repo_name=repo_name,
+            repo_full_name=str(wiki_json.get("repo_url") or repo_name),
+            default_branch="main",
+            index_run_id=None,
+            loc=int(overview.get("loc") or 0),
+            file_count=int(overview.get("file_count") or 0),
+        )
+        wiki_md = _compile_wiki_md(wiki_json, repo_name)
+        try:
+            (output_dir / WIKI_HTML_NAME).write_text(wiki_html, encoding="utf-8")
+            (output_dir / WIKI_MD_NAME).write_text(wiki_md, encoding="utf-8")
+        except OSError as e:
+            logger.warning("Could not write completed wiki html/md: %s", e)
+        return {"wiki_html": wiki_html, "wiki_md": wiki_md}
+
+    def _load_partial_wiki_artifacts(
+        self, output_dir: Path
+    ) -> Optional[Dict[str, Any]]:
+        """If CLI left wiki_result.json, recover usable artifacts."""
+        json_path = output_dir / WIKI_JSON_NAME
+        if not json_path.is_file():
+            return None
+        try:
+            wiki_json = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(wiki_json, dict) or not wiki_json:
+            return None
+
+        html_path = output_dir / WIKI_HTML_NAME
+        md_path = output_dir / WIKI_MD_NAME
+        wiki_html = html_path.read_text(encoding="utf-8") if html_path.is_file() else None
+        wiki_md = md_path.read_text(encoding="utf-8") if md_path.is_file() else None
+        if not wiki_html or not wiki_md:
+            completed = self._complete_wiki_artifacts_from_json(
+                output_dir,
+                wiki_json,
+                repo_slug=str(wiki_json.get("repo_name") or "repository"),
+            )
+            wiki_html = wiki_html or completed.get("wiki_html")
+            wiki_md = wiki_md or completed.get("wiki_md")
+        return {
+            "wiki_json": wiki_json,
+            "wiki_html": wiki_html,
+            "wiki_md": wiki_md,
+        }
 
     def _implementation_snippets(self, chunks: List[FileChunk], max_chars: int = 14000) -> str:
         relevant: List[FileChunk] = []

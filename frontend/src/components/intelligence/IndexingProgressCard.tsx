@@ -2,6 +2,7 @@
 
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export interface IndexRunInfo {
@@ -33,7 +34,11 @@ function getAnalysisStage(progress: number, status: string): { title: string; de
     return { title: 'Indexing for semantic search', detail: 'Building search index for code and wiki…' }
   }
   if (progress < 100) {
-    return { title: 'Wiki Agent', detail: 'Generating HTML wiki, diagrams, and analysis attributes…' }
+    return {
+      title: 'Wiki Agent',
+      detail:
+        'Generating HTML wiki via CLI/API. Long CLI runs are auto-killed after the configured timeout, then Savi recovers partial output or falls back when mode is auto.',
+    }
   }
   return { title: 'Analysis complete', detail: 'Repository is ready.' }
 }
@@ -52,11 +57,19 @@ interface IndexingProgressCardProps {
   repositoryName?: string
   compact?: boolean
   className?: string
+  onCancel?: () => void | Promise<void>
+  onRetry?: () => void | Promise<void>
+  actionBusy?: boolean
 }
 
 export function isAnalysisActive(run?: IndexRunInfo | null, repoStatus?: string): boolean {
-  if (!run) return repoStatus === 'indexing'
-  return ['pending', 'running'].includes(run.status) || repoStatus === 'indexing'
+  // Prefer the latest run — a stale repo.status of "indexing" after orphan reclaim
+  // must not keep the UI stuck on "analyzing" with no Retry.
+  if (run) {
+    if (['failed', 'completed', 'cancelled'].includes(run.status)) return false
+    return ['pending', 'running'].includes(run.status)
+  }
+  return repoStatus === 'indexing'
 }
 
 export function IndexingProgressCard({
@@ -64,6 +77,9 @@ export function IndexingProgressCard({
   repositoryName,
   compact = false,
   className,
+  onCancel,
+  onRetry,
+  actionBusy = false,
 }: IndexingProgressCardProps) {
   const active = isAnalysisActive(run, undefined)
   const failed = run.status === 'failed'
@@ -73,6 +89,7 @@ export function IndexingProgressCard({
   if (!active && !failed) return null
 
   const displayProgress = run.status === 'pending' ? 3 : Math.max(progress, 5)
+  const wikiStage = active && progress >= 85
 
   return (
     <Card
@@ -146,13 +163,49 @@ export function IndexingProgressCard({
             )}
 
             {failed && run.error && (
-              <p className="text-xs text-destructive">{run.error}</p>
+              <p className="text-xs text-destructive whitespace-pre-wrap break-words">{run.error}</p>
             )}
 
             {!compact && active && (
               <p className="text-[11px] text-muted-foreground">
-                Progress is saved on the server — you can leave this page or log out and return later.
+                Progress is saved on the server — you can leave this page. If wiki CLI hangs,
+                use Cancel (kills the CLI process group) then Retry.
               </p>
+            )}
+
+            {(active || failed) && (onCancel || onRetry) && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {active && onCancel && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={actionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void onCancel()
+                    }}
+                  >
+                    {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {wikiStage ? 'Cancel wiki / analysis' : 'Cancel analysis'}
+                  </Button>
+                )}
+                {failed && onRetry && (
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    disabled={actionBusy}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void onRetry()
+                    }}
+                  >
+                    {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    Retry full analysis
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         </div>

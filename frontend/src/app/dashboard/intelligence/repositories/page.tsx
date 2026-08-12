@@ -38,6 +38,7 @@ export default function RepositoriesPage() {
   const [error, setError] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Repository | null>(null)
+  const [actionRepoId, setActionRepoId] = useState<string | null>(null)
   const importedCount = searchParams.get('imported')
 
   const fetchRepos = useCallback(async (silent = false) => {
@@ -87,6 +88,38 @@ export default function RepositoriesPage() {
     } finally {
       setDeletingId(null)
       setConfirmDelete(null)
+    }
+  }
+
+  const cancelRepoIndex = async (repoId: string) => {
+    setActionRepoId(repoId)
+    try {
+      await apiClient.post(`/api/v1/intelligence/repos/${repoId}/index/cancel`)
+      await fetchRepos(true)
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(detail || 'Failed to cancel analysis')
+    } finally {
+      setActionRepoId(null)
+    }
+  }
+
+  const retryRepoIndex = async (repoId: string) => {
+    setActionRepoId(repoId)
+    try {
+      await apiClient.post(`/api/v1/intelligence/repos/${repoId}/index`)
+      await fetchRepos(true)
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(detail || 'Failed to start analysis')
+    } finally {
+      setActionRepoId(null)
     }
   }
 
@@ -158,10 +191,17 @@ export default function RepositoriesPage() {
               <div className="divide-y">
                 {repos.map((repo) => (
                   <div key={repo.id} className="py-3 first:pt-0 last:pb-0">
-                    <button
-                      type="button"
+                    <div
+                      role="link"
+                      tabIndex={0}
                       onClick={() => router.push(`/dashboard/intelligence/repositories/${repo.id}`)}
-                      className="flex w-full items-center justify-between text-left transition-colors hover:bg-muted/50 rounded-md px-1 -mx-1"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          router.push(`/dashboard/intelligence/repositories/${repo.id}`)
+                        }
+                      }}
+                      className="flex w-full cursor-pointer items-center justify-between text-left transition-colors hover:bg-muted/50 rounded-md px-1 -mx-1"
                     >
                       <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10">
@@ -204,13 +244,26 @@ export default function RepositoriesPage() {
                         </Button>
                         <ArrowRight className="h-4 w-4 text-muted-foreground" />
                       </div>
-                    </button>
-                    {repo.index_run && isAnalysisActive(repo.index_run, repo.status) && (
+                    </div>
+                    {repo.index_run &&
+                      (isAnalysisActive(repo.index_run, repo.status) ||
+                        repo.index_run.status === 'failed') && (
                       <div className="mt-3 pl-11">
                         <IndexingProgressCard
                           run={repo.index_run}
                           repositoryName={repo.github_full_name || repo.name}
                           compact
+                          onCancel={
+                            isAnalysisActive(repo.index_run, repo.status)
+                              ? () => cancelRepoIndex(repo.id)
+                              : undefined
+                          }
+                          onRetry={
+                            repo.index_run.status === 'failed'
+                              ? () => retryRepoIndex(repo.id)
+                              : undefined
+                          }
+                          actionBusy={actionRepoId === repo.id}
                         />
                       </div>
                     )}

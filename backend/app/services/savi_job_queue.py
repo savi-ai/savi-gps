@@ -168,3 +168,43 @@ async def enqueue_build_task(task_id: str) -> Dict[str, Any]:
 
 def schedule_build_task(task_id: str) -> Dict[str, Any]:
     return _schedule_coro(lambda: enqueue_build_task(task_id), label="execute_build_task")
+
+
+async def enqueue_application_wiki(tenant_id: str, application_id: str) -> Dict[str, Any]:
+    """Enqueue or run application wiki generation."""
+    if arq_enabled():
+        pool = await _get_arq_pool()
+        job = await pool.enqueue_job(
+            "execute_application_wiki",
+            tenant_id,
+            application_id,
+            _job_id=f"app-wiki:{application_id}",
+        )
+        job_id = getattr(job, "job_id", None) or f"app-wiki:{application_id}"
+        logger.info(
+            "Enqueued execute_application_wiki job_id=%s app=%s",
+            job_id,
+            application_id,
+        )
+        return {"queued": True, "backend": "arq", "job_id": job_id}
+
+    from app.core.database import SessionLocal
+    from app.services.intelligence.application_wiki_agent_service import (
+        ApplicationWikiAgentService,
+    )
+
+    db = SessionLocal()
+    try:
+        result = await ApplicationWikiAgentService(db).generate_for_application(
+            tenant_id, application_id
+        )
+        return {"queued": False, "backend": "inline", "result": result}
+    finally:
+        db.close()
+
+
+def schedule_application_wiki(tenant_id: str, application_id: str) -> Dict[str, Any]:
+    return _schedule_coro(
+        lambda: enqueue_application_wiki(tenant_id, application_id),
+        label="execute_application_wiki",
+    )

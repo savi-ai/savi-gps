@@ -199,6 +199,16 @@ export default function RepositoryDetailPage() {
     }
   }
 
+  const cancelIndex = async () => {
+    setIndexing(true)
+    try {
+      await apiClient.post(`/api/v1/intelligence/repos/${repoId}/index/cancel`)
+      await load()
+    } finally {
+      setIndexing(false)
+    }
+  }
+
   const deleteRepo = async () => {
     setDeleting(true)
     try {
@@ -414,6 +424,9 @@ export default function RepositoryDetailPage() {
         <IndexingProgressCard
           run={run}
           repositoryName={repo.github_full_name || repo.name}
+          onCancel={analysisActive ? cancelIndex : undefined}
+          onRetry={run.status === 'failed' ? startIndex : undefined}
+          actionBusy={indexing}
         />
       )}
 

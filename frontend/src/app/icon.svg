@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Savi GPS favicon: location pin + compass needle on brand primary -->
+  <rect width="32" height="32" rx="7" fill="#2F4EB8"/>
+  <!-- pin body -->
+  <path
+    d="M16 5.5c-4.05 0-7.25 3.15-7.25 7.05 0 5.15 6.1 12.2 6.75 12.95a.7.7 0 0 0 1 0c.65-.75 6.75-7.8 6.75-12.95C22.25 8.65 19.05 5.5 16 5.5Z"
+    fill="#F8FAFC"
+  />
+  <!-- inner circle -->
+  <circle cx="16" cy="12.4" r="3.6" fill="#2F4EB8"/>
+  <!-- compass needle -->
+  <path d="M16 9.2 L17.35 12.4 L16 15.6 L14.65 12.4 Z" fill="#F8FAFC"/>
+  <circle cx="16" cy="12.4" r="1.05" fill="#1E3A8A"/>
+</svg>

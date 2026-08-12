@@ -228,13 +228,34 @@ def wiki_export_path_prefix() -> str:
     return raw or "docs/savi-wiki"
 
 
+def wiki_app_export_path_prefix() -> str:
+    """Normalized path for application wiki fan-out into member repos."""
+    raw = (settings.WIKI_APP_GITHUB_EXPORT_PATH or "docs/savi-app-wiki").strip().strip("/")
+    return raw or "docs/savi-app-wiki"
+
+
+def wiki_ignored_export_prefixes() -> List[str]:
+    """All export folders that must not trigger per-repo wiki regeneration."""
+    prefixes = [wiki_export_path_prefix(), wiki_app_export_path_prefix()]
+    # Deduplicate while preserving order
+    seen = set()
+    out: List[str] = []
+    for p in prefixes:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
 def path_is_under_wiki_export(path: Optional[str]) -> bool:
-    """True if path is inside the configured wiki export directory."""
+    """True if path is inside a configured wiki export directory (repo or app)."""
     if not path:
         return False
     normalized = path.replace("\\", "/").lstrip("./").strip()
-    prefix = wiki_export_path_prefix()
-    return normalized == prefix or normalized.startswith(prefix + "/")
+    for prefix in wiki_ignored_export_prefixes():
+        if normalized == prefix or normalized.startswith(prefix + "/"):
+            return True
+    return False
 
 
 def changes_only_in_wiki_export(changes: Sequence[WikiFileChange]) -> bool:

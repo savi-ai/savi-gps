@@ -19,6 +19,17 @@ async def _index_worker_loop() -> None:
     _worker_running = True
     poll_interval = 3
 
+    # Reclaim runs left as "running" after uvicorn reload / crash
+    db = SessionLocal()
+    try:
+        n = IndexerService(db).reclaim_orphaned_runs()
+        if n:
+            logger.info("Reclaimed %s orphaned index run(s) on worker start", n)
+    except Exception as e:
+        logger.warning("Orphan reclaim failed: %s", e)
+    finally:
+        db.close()
+
     while _worker_running:
         db = SessionLocal()
         try:
