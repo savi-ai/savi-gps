@@ -16,16 +16,17 @@ from app.core.logger import logger
 router = APIRouter(prefix="/tenant-config", tags=["Tenant Config"])
 
 
-class OnboardingRequest(BaseModel):
-    path: str = Field(..., description="wiki_only | modernization | full")
-
-
 class CapabilitiesUpdateRequest(BaseModel):
     build: Optional[bool] = None
     intelligence: Optional[bool] = None
     fleet: Optional[bool] = None
     modernize: Optional[bool] = None
     portfolio: Optional[bool] = None
+    teams: Optional[bool] = None
+
+
+class OnboardingRequest(BaseModel):
+    path: str = Field(..., description="wiki_only | alpha | modernization | full")
 
 
 class AssessmentSettingsUpdateRequest(BaseModel):

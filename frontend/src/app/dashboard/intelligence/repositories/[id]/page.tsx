@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowLeft, BookOpen, MessageSquare, Play, RefreshCw, FileText, Trash2, Network } from 'lucide-react'
+import { BookOpen, MessageSquare, Play, RefreshCw, FileText, Trash2, Network } from 'lucide-react'
 import ReadinessPanel from '@/components/modernize/ReadinessPanel'
 import { BlastRadiusPanel } from '@/components/intelligence/BlastRadiusPanel'
 import { DomainGraphPanel } from '@/components/intelligence/DomainGraphPanel'
@@ -94,9 +94,10 @@ export default function RepositoryDetailPage() {
   const searchParams = useSearchParams()
   const showAssignPrompt = searchParams.get('assign_app') === '1'
   const activeTab = searchParams.get('tab') === 'analysis' ? 'analysis' : 'overview'
-  const { hasCapability, hasPermission } = useAuth()
+  const { hasCapability, hasPermission, currentTenant } = useAuth()
   const repoId = params?.id as string
   const intelligenceEnabled = hasCapability('intelligence')
+  const specsEnabled = Boolean(currentTenant?.spec_layer_settings?.enabled)
   const { data: applicationsList = [] } = useApplications({ enabled: intelligenceEnabled })
   const {
     data: connections = null,
@@ -108,11 +109,6 @@ export default function RepositoryDetailPage() {
   const [loading, setLoading] = useState(true)
   const [indexing, setIndexing] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [wikiMeta, setWikiMeta] = useState<{
-    analysis_dir?: string
-    generation_source?: string
-    shell_succeeded?: boolean
-  } | null>(null)
   const [driftStatus, setDriftStatus] = useState<{
     drift_status?: string
     wiki_pending_review?: number
@@ -128,17 +124,15 @@ export default function RepositoryDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const [repoRes, pagesRes, statusRes, wikiRes, driftRes] = await Promise.all([
+      const [repoRes, pagesRes, statusRes, driftRes] = await Promise.all([
         apiClient.get(`/api/v1/intelligence/repos/${repoId}`),
         apiClient.get(`/api/v1/intelligence/repos/${repoId}/pages`),
         apiClient.get(`/api/v1/intelligence/repos/${repoId}/index-status`),
-        apiClient.get(`/api/v1/intelligence/repos/${repoId}/wiki-site`).catch(() => ({ data: null })),
         apiClient.get(`/api/v1/intelligence/repos/${repoId}/specs/drift`).catch(() => ({ data: null })),
       ])
       setRepo(repoRes.data)
       setPages(pagesRes.data?.pages || [])
       setIndexStatus(statusRes.data)
-      setWikiMeta(wikiRes.data)
       setDriftStatus(driftRes.data)
     } catch {
       setRepo(null)
@@ -277,23 +271,16 @@ export default function RepositoryDetailPage() {
         </Card>
       )}
 
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ml-2"
-        onClick={() => router.push('/dashboard/intelligence/repositories')}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Repositories
-      </Button>
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 space-y-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">{repo.name}</h1>
+            <p className="mt-1 truncate text-sm text-muted-foreground">
+              {repo.github_full_name || repo.url}
+            </p>
+          </div>
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{repo.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {repo.github_full_name || repo.url}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="secondary" className="capitalize">
               {repo.status}
             </Badge>
@@ -313,79 +300,93 @@ export default function RepositoryDetailPage() {
             {(driftStatus?.wiki_pending_review ?? 0) > 0 && (
               <Badge variant="outline">{driftStatus?.wiki_pending_review} pending review</Badge>
             )}
-            {(driftStatus?.has_specs || driftStatus?.has_kiro_specs) && (
+            {specsEnabled && (driftStatus?.has_specs || driftStatus?.has_kiro_specs) && (
               <Badge variant="outline">{driftStatus?.spec_count ?? 0} specs</Badge>
             )}
           </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Button
-              variant="link"
-              size="sm"
-              className="h-auto p-0 text-xs"
-              onClick={() => router.push(`/dashboard/intelligence/specs?repo=${repoId}`)}
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <button
+              type="button"
+              className="text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => router.push('/dashboard/intelligence/repositories')}
             >
-              Specs &amp; drift
-            </Button>
-            <Button
-              variant="link"
-              size="sm"
-              className="h-auto p-0 text-xs"
+              ← All repositories
+            </button>
+            <span className="text-muted-foreground/40" aria-hidden>
+              ·
+            </span>
+            <button
+              type="button"
+              className="text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => router.push(`/dashboard/intelligence/search?repo=${repoId}`)}
             >
               Search this repo
-            </Button>
+            </button>
+            {specsEnabled && (
+              <>
+                <span className="text-muted-foreground/40" aria-hidden>
+                  ·
+                </span>
+                <button
+                  type="button"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => router.push(`/dashboard/intelligence/specs?repo=${repoId}`)}
+                >
+                  Specs &amp; drift
+                </button>
+              </>
+            )}
           </div>
+
           {repo.last_index_error && (
-            <p className="mt-2 text-sm text-destructive">{repo.last_index_error}</p>
-          )}
-          {wikiMeta?.analysis_dir && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Artifacts: <code className="text-[11px]">{wikiMeta.analysis_dir}</code>
-              {wikiMeta.generation_source && (
-                <> · via <span className="font-medium">{wikiMeta.generation_source}</span></>
-              )}
-            </p>
+            <p className="text-sm text-destructive">{repo.last_index_error}</p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           {pages.length > 0 && (
-            <>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
-                onClick={() => router.push(`/dashboard/intelligence/repositories/${repoId}/wiki-site`)}
+                onClick={() =>
+                  window.open(`/wiki/repositories/${repoId}`, '_blank', 'noopener,noreferrer')
+                }
               >
                 <FileText className="h-4 w-4" />
-                Full Wiki (HTML)
+                Full Wiki
               </Button>
               <Button
                 variant="outline"
                 onClick={() => router.push(`/dashboard/intelligence/chat?repo_id=${repoId}`)}
               >
                 <MessageSquare className="h-4 w-4" />
-                Wiki Chat
+                Chat
               </Button>
-            </>
+            </div>
           )}
-          <Button onClick={startIndex} disabled={indexing || analysisActive || deleting}>
-            {indexing || analysisActive ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4" />
-            )}
-            {analysisActive && run
-              ? run.status === 'pending'
-                ? 'Queued…'
-                : `Analyzing ${run.progress}%`
-              : 'Re-index'}
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => setConfirmDelete(true)}
-            disabled={deleting || analysisActive}
-          >
-            <Trash2 className="h-4 w-4" />
-            {deleting ? 'Deleting…' : 'Delete'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={startIndex} disabled={indexing || analysisActive || deleting}>
+              {indexing || analysisActive ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {analysisActive && run
+                ? run.status === 'pending'
+                  ? 'Queued…'
+                  : `Analyzing ${run.progress}%`
+                : 'Re-index'}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleting || analysisActive}
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -481,7 +482,7 @@ export default function RepositoryDetailPage() {
                   value={assignRole}
                   onChange={(e) => setAssignRole(e.target.value)}
                 >
-                  {['backend', 'frontend', 'api', 'worker', 'infra', 'library', 'other'].map(
+                  {['unknown', 'backend', 'frontend', 'api', 'worker', 'infra', 'library', 'other'].map(
                     (role) => (
                       <option key={role} value={role}>
                         {role}

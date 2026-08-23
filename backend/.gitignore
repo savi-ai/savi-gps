@@ -25,6 +25,7 @@ htmlcov/
 *.egg-info/
 .eggs/
 dist/
+build/
 
 # Virtual environments
 venv/

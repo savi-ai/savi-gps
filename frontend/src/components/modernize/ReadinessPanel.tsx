@@ -9,6 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertTriangle, CheckCircle2, Loader2, Rocket, RefreshCw, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import AgentEffortCard, {
+  type AgentEffort,
+  type AssessmentSynthesis,
+} from '@/components/modernize/AgentEffortCard'
 
 export interface ReadinessSignal {
   id: string
@@ -17,8 +21,11 @@ export interface ReadinessSignal {
   score: number
   status: 'good' | 'warn' | 'bad' | string
   detail: string
+  recommendation?: string
+  source?: string
+  weight?: number
   failed_policies?: Array<{
-    policy_name: string
+    policy_name?: string
     rule_id: string
     message: string
     policy_version_id?: string
@@ -53,6 +60,8 @@ export interface ReadinessData {
     spawned_project_id?: string | null
   }>
   indexed: boolean
+  synthesis?: AssessmentSynthesis
+  agent_effort?: AgentEffort
 }
 
 interface Playbook {
@@ -96,6 +105,16 @@ function SignalRow({ signal }: { signal: ReadinessSignal }) {
         <div>
           <p className="text-sm font-medium">{signal.label}</p>
           <p className="text-xs text-muted-foreground">{signal.detail}</p>
+          {signal.recommendation && signal.status !== 'good' && (
+            <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+              Next step: {signal.recommendation}
+            </p>
+          )}
+          {signal.source === 'analysis_config' && (
+            <Badge variant="outline" className="mt-1 text-[10px]">
+              Analysis Config
+            </Badge>
+          )}
           {failures.length > 0 && (
             <ul className="mt-1 space-y-0.5">
               {failures.map((f, i) => (
@@ -198,8 +217,8 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
           <div>
             <CardTitle className="text-base">Modernization readiness</CardTitle>
             <CardDescription>
-              Manual assessment from wiki analysis, index metadata, and tenant
-              modernization policies
+              Manual assessment from Analysis Config signals, wiki metadata, and policies.
+              Run assessment adds narrative + agent-effort (not on page browse).
             </CardDescription>
           </div>
           <Button variant="ghost" size="icon" onClick={load} disabled={loading} aria-label="Reload stored">
@@ -262,6 +281,13 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                     </Button>
                   )}
                 </div>
+
+                {(readiness.synthesis || readiness.agent_effort) && (
+                  <AgentEffortCard
+                    synthesis={readiness.synthesis}
+                    effort={readiness.agent_effort}
+                  />
+                )}
 
                 <div className="divide-y rounded-md border px-3">
                   {(readiness.signals || []).map((s) => (

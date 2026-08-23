@@ -6,44 +6,56 @@ import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/axios'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { BookOpen, GitBranch, Layers, Loader2, Check } from 'lucide-react'
+import { BookOpen, GitBranch, Layers, Loader2, Check, Sparkles } from 'lucide-react'
 
-type OnboardingPath = 'wiki_only' | 'modernization' | 'full'
+type OnboardingPath = 'alpha' | 'wiki_only' | 'modernization' | 'full'
 
 const OPTIONS: {
   id: OnboardingPath
   title: string
   description: string
   icon: React.ComponentType<{ className?: string }>
+  badge?: string
 }[] = [
   {
-    id: 'wiki_only',
-    title: 'Document existing systems',
+    id: 'alpha',
+    title: 'Alpha (recommended)',
     description:
-      'Connect repositories and generate citation-verified wikis, grounded chat, and code search. No Build pipeline.',
+      'Repository & application wikis, chat, search, and modernization assessments. Teams and Build stay off until you enable them for testing.',
+    icon: Sparkles,
+    badge: 'Alpha',
+  },
+  {
+    id: 'wiki_only',
+    title: 'Wiki only',
+    description:
+      'Connect repositories and generate citation-verified wikis, grounded chat, and code search. No assessments.',
     icon: BookOpen,
   },
   {
     id: 'modernization',
-    title: 'Legacy modernization',
+    title: 'Modernization + Build (Beta preview)',
     description:
-      'Understand legacy code with Intelligence, then plan and rebuild using the Build agent pipeline with wiki context.',
+      'Intelligence and assessments plus Idea → production Projects. Early preview for internal testing.',
     icon: GitBranch,
+    badge: 'Beta',
   },
   {
     id: 'full',
-    title: 'Full platform',
+    title: 'Full platform (testing)',
     description:
-      'Build new software from ideas and maintain existing repos with Intelligence. Fleet remediation when enabled.',
+      'Unlock Build, Teams, Portfolio, and Fleet when server flags allow. Use for QA of upcoming releases.',
     icon: Layers,
+    badge: 'Test',
   },
 ]
 
 export default function OnboardingPage() {
   const router = useRouter()
   const { hasPermission, refreshTenantConfig, currentTenant } = useAuth()
-  const [selected, setSelected] = useState<OnboardingPath | null>(null)
+  const [selected, setSelected] = useState<OnboardingPath | null>('alpha')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,9 +71,7 @@ export default function OnboardingPage() {
     try {
       await apiClient.post('/api/v1/tenant-config/onboarding', { path: selected })
       await refreshTenantConfig()
-      if (selected === 'wiki_only') {
-        router.push('/dashboard/intelligence/repositories')
-      } else if (selected === 'modernization') {
+      if (selected === 'wiki_only' || selected === 'alpha' || selected === 'modernization') {
         router.push('/dashboard/intelligence/repositories')
       } else {
         router.push('/dashboard')
@@ -83,7 +93,7 @@ export default function OnboardingPage() {
         <h1 className="text-2xl font-bold tracking-tight">Welcome to Savi GPS</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Choose how {currentTenant?.name || 'your organization'} will use the platform. You can change
-          this later in tenant settings.
+          this later in Tenant Settings — including turning on Beta modules for testing.
         </p>
       </div>
 
@@ -114,7 +124,10 @@ export default function OnboardingPage() {
                     <Icon className="h-5 w-5" />
                   </div>
                   <div className="flex-1">
-                    <CardTitle className="text-base">{option.title}</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-base">{option.title}</CardTitle>
+                      {option.badge ? <Badge variant="secondary">{option.badge}</Badge> : null}
+                    </div>
                     <CardDescription className="mt-1">{option.description}</CardDescription>
                   </div>
                   {isSelected && <Check className="h-5 w-5 text-primary" />}

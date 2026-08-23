@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     INTELLIGENCE_DATABASE_URL: Optional[str] = None
     INTELLIGENCE_ENABLED: bool = False
     FLEET_ENABLED: bool = False
+    BUILD_ENABLED: bool = False
+    TEAMS_ENABLED: bool = False
     PORTFOLIO_ENABLED: Optional[bool] = None
     MODERNIZE_ENABLED: Optional[bool] = None
     # ADR 0007: when true, Application/Project mutations require Team membership
@@ -104,6 +106,8 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
+    LOG_TO_FILE: bool = True
+    LOG_DIR: Optional[str] = None  # default backend/logs
 
     # External Integrations
     JIRA_ENABLED: bool = False

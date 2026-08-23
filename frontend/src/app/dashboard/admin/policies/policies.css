@@ -292,14 +292,22 @@
   position: sticky;
   right: 0;
   background: var(--card-bg, #fff);
-  box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
+  border-left: 1px solid var(--border-color, #e5e7eb);
   z-index: 1;
   white-space: nowrap;
+  width: 1%;
+  padding-left: 0.85rem;
+  padding-right: 0.85rem;
 }
 
 .policies-table thead th.col-actions {
   background: var(--bg-secondary, #f9fafb);
   z-index: 2;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #6b7280);
 }
 
 .policy-row {
@@ -458,46 +466,76 @@
 }
 
 .policy-actions {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--card-bg, #fff);
 }
 
 .action-btn {
-  padding: 0.35rem 0.55rem;
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.65rem;
+  border: none;
+  border-right: 1px solid var(--border-color, #e5e7eb);
+  background: transparent;
   font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s, color 0.15s;
+}
+
+.action-btn:last-child {
+  border-right: none;
+}
+
+.action-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .action-btn.view {
-  color: var(--primary-color);
+  color: #374151;
 }
 
 .action-btn.view:hover {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: var(--primary-color);
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .action-btn.edit {
-  color: var(--text-primary);
+  color: #374151;
 }
 
 .action-btn.edit:hover {
-  background: var(--bg-secondary);
+  background: #f3f4f6;
+  color: #111827;
 }
 
 .action-btn.delete {
-  color: #dc2626;
+  color: #b91c1c;
 }
 
 .action-btn.delete:hover {
-  background: #fee2e2;
-  border-color: #dc2626;
+  background: #fef2f2;
   color: #991b1b;
+}
+
+@media (max-width: 1100px) {
+  .action-label {
+    display: none;
+  }
+
+  .action-btn {
+    padding: 0.45rem 0.55rem;
+  }
 }
 
 .loading-state,

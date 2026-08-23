@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import apiClient from '@/lib/axios'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -69,6 +69,8 @@ function repoKey(r: GitHubRepo) {
 
 export default function ConnectRepositoryWizard() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const presetApplicationId = searchParams.get('application_id') || ''
   const [step, setStep] = useState<WizardStep>('auth')
   const [token, setToken] = useState('')
   const [credentialId, setCredentialId] = useState<string | null>(null)
@@ -107,6 +109,12 @@ export default function ConnectRepositoryWizard() {
       .then((res) => setApplications(res.data?.applications || []))
       .catch(() => setApplications([]))
   }, [step])
+
+  useEffect(() => {
+    if (!presetApplicationId) return
+    setAppGroupMode('existing')
+    setApplicationId(presetApplicationId)
+  }, [presetApplicationId])
 
   const authPayload = useCallback(() => {
     if (credentialId) return { credential_id: credentialId }
@@ -228,7 +236,10 @@ export default function ConnectRepositoryWizard() {
         credential_label: credentialLabel,
         credential_id: credentialId || undefined,
         auto_index: autoIndex,
-        application_id: appGroupMode === 'existing' ? applicationId || undefined : undefined,
+        application_id:
+          appGroupMode === 'existing'
+            ? applicationId || presetApplicationId || undefined
+            : undefined,
         application_name: appGroupMode === 'new' ? applicationName.trim() || undefined : undefined,
         repos: selectedRepoObjects.map((r) => ({
           owner: r.owner,
@@ -240,7 +251,9 @@ export default function ConnectRepositoryWizard() {
         })),
       })
       router.push(
-        `/dashboard/intelligence/repositories?imported=${res.data.created_count || 0}`
+        presetApplicationId
+          ? `/dashboard/intelligence/applications/${presetApplicationId}?tab=repositories`
+          : `/dashboard/intelligence/repositories?imported=${res.data.created_count || 0}`
       )
     } catch (err: unknown) {
       setError(extractError(err))
@@ -261,11 +274,16 @@ export default function ConnectRepositoryWizard() {
         url: manualForm.url.trim(),
         default_branch: manualForm.default_branch.trim() || 'main',
         provider: 'github',
+        application_id: presetApplicationId || undefined,
       })
       if (autoIndex) {
         await apiClient.post(`/api/v1/intelligence/repos/${res.data.id}/index`)
       }
-      router.push(`/dashboard/intelligence/repositories/${res.data.id}?assign_app=1`)
+      router.push(
+        presetApplicationId
+          ? `/dashboard/intelligence/applications/${presetApplicationId}?tab=repositories`
+          : `/dashboard/intelligence/repositories/${res.data.id}?assign_app=1`
+      )
     } catch (err: unknown) {
       setError(extractError(err))
       setLoading(false)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/axios'
@@ -9,13 +9,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft } from 'lucide-react'
-
-interface RepositoryOption {
-  id: string
-  name: string
-  github_full_name?: string
-  status: string
-}
+import ApplicationRepoAttachPanel, {
+  attachRepositoriesToApplication,
+  emptyRepoRow,
+  type RepoAttachPayload,
+  type RepoOption,
+} from '@/components/intelligence/ApplicationRepoAttachPanel'
 
 export default function NewApplicationPage() {
   const router = useRouter()
@@ -23,8 +22,13 @@ export default function NewApplicationPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [domain, setDomain] = useState('')
-  const [repositories, setRepositories] = useState<RepositoryOption[]>([])
-  const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([])
+  const [repositories, setRepositories] = useState<RepoOption[]>([])
+  const [repoAttach, setRepoAttach] = useState<RepoAttachPayload>({
+    selectedRepoIds: [],
+    newRepoRows: [emptyRepoRow()],
+    role: 'unknown',
+    autoIndex: true,
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,18 +37,18 @@ export default function NewApplicationPage() {
       router.push('/dashboard')
       return
     }
-    apiClient.get('/api/v1/intelligence/repos').then((res) => {
-      setRepositories(res.data?.repositories || [])
-    })
+    apiClient
+      .get('/api/v1/intelligence/repos')
+      .then((res) => setRepositories(res.data?.repositories || []))
+      .catch(() => setRepositories([]))
   }, [hasCapability, router])
 
-  if (!hasPermission('can_use_intelligence')) return null
+  const unassignedRepos = useMemo(
+    () => repositories.filter((r) => !r.application),
+    [repositories]
+  )
 
-  const toggleRepo = (id: string) => {
-    setSelectedRepoIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    )
-  }
+  if (!hasPermission('can_use_intelligence')) return null
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -52,6 +56,7 @@ export default function NewApplicationPage() {
       setError('Name is required')
       return
     }
+
     setLoading(true)
     setError(null)
     try {
@@ -59,9 +64,20 @@ export default function NewApplicationPage() {
         name: name.trim(),
         description: description.trim() || null,
         domain: domain.trim() || null,
-        repository_ids: selectedRepoIds.length > 0 ? selectedRepoIds : undefined,
+        repository_ids:
+          repoAttach.selectedRepoIds.length > 0 ? repoAttach.selectedRepoIds : undefined,
       })
-      router.push(`/dashboard/intelligence/applications/${res.data.id}`)
+      const appId = res.data.id as string
+
+      const hasNewUrls = repoAttach.newRepoRows.some((r) => r.url.trim())
+      if (hasNewUrls) {
+        await attachRepositoriesToApplication(appId, {
+          ...repoAttach,
+          selectedRepoIds: [],
+        })
+      }
+
+      router.push(`/dashboard/intelligence/applications/${appId}`)
     } catch (err: unknown) {
       const detail =
         err && typeof err === 'object' && 'response' in err
@@ -82,11 +98,11 @@ export default function NewApplicationPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">New application</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Define a product in your estate and optionally attach repositories now.
+          Define a product and attach multiple repositories now — existing or new GitHub URLs.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Application details</CardTitle>
@@ -126,35 +142,30 @@ export default function NewApplicationPage() {
                 placeholder="Short summary for executives and teams"
               />
             </div>
-
-            {repositories.length > 0 && (
-              <div className="space-y-2">
-                <Label>Repositories (optional)</Label>
-                <p className="text-xs text-muted-foreground">
-                  Only unassigned repos can be added. Assign others from the repo detail page.
-                </p>
-                <ul className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
-                  {repositories.map((repo) => (
-                    <li key={repo.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={selectedRepoIds.includes(repo.id)}
-                        onChange={() => toggleRepo(repo.id)}
-                        className="h-4 w-4"
-                      />
-                      <span>{repo.github_full_name || repo.name}</span>
-                      <span className="text-xs text-muted-foreground capitalize">{repo.status}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Creating…' : 'Create application'}
-            </Button>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Repositories</CardTitle>
+            <CardDescription>
+              Optional — select multiple existing repos and/or connect new GitHub URLs.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ApplicationRepoAttachPanel
+              variant="embedded"
+              availableRepos={unassignedRepos}
+              value={repoAttach}
+              onChange={setRepoAttach}
+              disabled={loading}
+            />
+          </CardContent>
+        </Card>
+
+        <Button type="submit" disabled={loading}>
+          {loading ? 'Creating…' : 'Create application'}
+        </Button>
       </form>
     </div>
   )

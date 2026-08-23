@@ -41,6 +41,8 @@ interface WikiChatPanelProps {
   repoName?: string
   pageContext?: string
   compact?: boolean
+  /** Fill parent height (wiki reader drawer). */
+  fill?: boolean
   className?: string
 }
 
@@ -59,7 +61,7 @@ function scopeLabel(scope: ChatScopeRef): string {
 }
 
 export function WikiChatPanel(props: WikiChatPanelProps) {
-  const { pageContext, compact = false, className = '' } = props
+  const { pageContext, compact = false, fill = false, className = '' } = props
   const scope = resolveScope(props)
   const displayLabel = scopeLabel(scope)
 
@@ -130,8 +132,12 @@ export function WikiChatPanel(props: WikiChatPanelProps) {
         : 'Ask a question about this wiki…'
 
   return (
-    <Card className={`flex flex-col ${compact ? 'h-full border-0 shadow-none' : ''} ${className}`}>
-      <CardHeader className={`pb-3 ${compact ? 'px-0 pt-0' : ''}`}>
+    <Card
+      className={`flex flex-col ${compact ? 'border-0 shadow-none' : ''} ${
+        fill ? 'h-full min-h-0' : compact ? 'h-full' : ''
+      } ${className}`}
+    >
+      <CardHeader className={`pb-3 ${compact ? 'px-0 pt-0' : ''} ${fill ? 'shrink-0' : ''}`}>
         <CardTitle className="flex items-center gap-2 text-base">
           <MessageSquare className="h-4 w-4" />
           Ask about {displayLabel}
@@ -144,11 +150,19 @@ export function WikiChatPanel(props: WikiChatPanelProps) {
               : 'Answers are grounded in indexed code and wiki pages with citations.'}
         </p>
       </CardHeader>
-      <CardContent className={`flex flex-1 flex-col gap-3 ${compact ? 'px-0 pb-0' : ''}`}>
+      <CardContent
+        className={`flex flex-1 flex-col gap-3 ${compact ? 'px-0 pb-0' : ''} ${
+          fill ? 'min-h-0' : ''
+        }`}
+      >
         <div
           ref={scrollRef}
           className={`flex-1 space-y-3 overflow-y-auto rounded-md border bg-muted/30 p-3 ${
-            compact ? 'min-h-[280px] max-h-[50vh]' : 'min-h-[320px] max-h-[480px]'
+            fill
+              ? 'min-h-0'
+              : compact
+                ? 'min-h-[280px] max-h-[50vh]'
+                : 'min-h-[320px] max-h-[480px]'
           }`}
         >
           {messages.length === 0 && (
@@ -216,7 +230,7 @@ export function WikiChatPanel(props: WikiChatPanelProps) {
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <div className="flex gap-2">
+        <div className={`flex gap-2 ${fill ? 'shrink-0' : ''}`}>
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

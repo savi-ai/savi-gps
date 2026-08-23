@@ -21,6 +21,10 @@ class CreateAttributeRequest(BaseModel):
     data_type: str = Field(default="string", max_length=20)
     extraction_hint: Optional[str] = Field(None, max_length=2000)
     description: Optional[str] = None
+    use_in_assessment: bool = False
+    assessment_weight: int = Field(default=1, ge=1, le=5)
+    assessment_rules: Optional[dict] = None
+    recommendation_template: Optional[str] = Field(None, max_length=2000)
 
 
 class UpdateAttributeRequest(BaseModel):
@@ -31,6 +35,10 @@ class UpdateAttributeRequest(BaseModel):
     extraction_hint: Optional[str] = None
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
+    use_in_assessment: Optional[bool] = None
+    assessment_weight: Optional[int] = Field(None, ge=1, le=5)
+    assessment_rules: Optional[dict] = None
+    recommendation_template: Optional[str] = Field(None, max_length=2000)
 
 
 def _require_admin_config(user: User, db: Session) -> None:
@@ -67,11 +75,27 @@ async def create_definition(
             category=request.category,
             data_type=request.data_type,
             extraction_hint=request.extraction_hint,
+            description=request.description,
+            use_in_assessment=request.use_in_assessment,
+            assessment_weight=request.assessment_weight,
+            assessment_rules=request.assessment_rules,
+            recommendation_template=request.recommendation_template,
             created_by=user.id,
         )
         return defn
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/assessment-definitions")
+async def list_assessment_definitions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Definitions flagged for modernization assessment signals."""
+    require_intelligence(user, db)
+    svc = AnalysisConfigService(db)
+    return {"definitions": svc.list_assessment_definitions(user.tenant_id)}
 
 
 @router.patch("/definitions/{definition_id}")

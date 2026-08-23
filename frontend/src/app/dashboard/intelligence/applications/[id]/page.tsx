@@ -16,7 +16,6 @@ import { WikiMarkdownContent } from '@/components/intelligence/WikiMarkdownConte
 import ApplicationReadinessPanel from '@/components/modernize/ApplicationReadinessPanel'
 import ReadinessPanel from '@/components/modernize/ReadinessPanel'
 import {
-  Plus,
   Trash2,
   Rocket,
   FolderKanban,
@@ -25,16 +24,19 @@ import {
   BookOpen,
   Loader2,
   RefreshCw,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react'
 import { ServiceMapPanel } from '@/components/intelligence/ServiceMapPanel'
 import {
   ApplicationWikiGenerateDialog,
   type MemberReadinessSummary,
 } from '@/components/intelligence/ApplicationWikiGenerateDialog'
+import ApplicationRepoAttachPanel from '@/components/intelligence/ApplicationRepoAttachPanel'
+import { WikiHtmlIframe } from '@/components/intelligence/WikiHtmlIframe'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { cn } from '@/lib/utils'
 
-const REPO_ROLES = ['backend', 'frontend', 'api', 'worker', 'infra', 'library', 'other']
 const TABS = ['repositories', 'dependencies', 'chat', 'wiki', 'readiness', 'plans', 'projects'] as const
 type TabId = (typeof TABS)[number]
 
@@ -121,15 +123,15 @@ export default function ApplicationDetailPage() {
   const [allRepos, setAllRepos] = useState<RepositoryOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [addRepoId, setAddRepoId] = useState('')
-  const [addRole, setAddRole] = useState('backend')
   const [saving, setSaving] = useState(false)
   const [readinessRepoId, setReadinessRepoId] = useState<string | null>(null)
   const [wikiMarkdown, setWikiMarkdown] = useState<string | null>(null)
+  const [wikiHtmlPreview, setWikiHtmlPreview] = useState<string | null>(null)
   const [wikiLoading, setWikiLoading] = useState(false)
   const [wikiSource, setWikiSource] = useState<string | null>(null)
   const [wikiStatus, setWikiStatus] = useState<string | null>(null)
   const [wikiGenerating, setWikiGenerating] = useState(false)
+  const [wikiCancelling, setWikiCancelling] = useState(false)
   const [wikiGenerateOpen, setWikiGenerateOpen] = useState(false)
   const [wikiBanner, setWikiBanner] = useState<string | null>(null)
   const [memberReadiness, setMemberReadiness] = useState<MemberReadinessSummary | null>(null)
@@ -166,22 +168,44 @@ export default function ApplicationDetailPage() {
     load()
   }, [hasCapability, router, load])
 
+  const refreshWikiStatus = useCallback(async () => {
+    const [wikiRes, statusRes] = await Promise.all([
+      apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`).catch(() => null),
+      apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki/status`).catch(() => null),
+    ])
+    if (wikiRes?.data) {
+      setWikiMarkdown(wikiRes.data.markdown || '')
+      setWikiSource(wikiRes.data.source || null)
+    }
+    const st = statusRes?.data?.status || wikiRes?.data?.status?.status || null
+    setWikiStatus(st)
+    setMemberReadiness(statusRes?.data?.member_readiness || null)
+
+    if (wikiRes?.data?.source === 'generated') {
+      try {
+        const htmlRes = await apiClient.get(
+          `/api/v1/intelligence/applications/${appId}/wiki-site/html`,
+          { responseType: 'text' }
+        )
+        setWikiHtmlPreview(
+          typeof htmlRes.data === 'string' ? htmlRes.data : String(htmlRes.data)
+        )
+      } catch {
+        setWikiHtmlPreview(null)
+      }
+    } else {
+      setWikiHtmlPreview(null)
+    }
+    return st
+  }, [appId])
+
   useEffect(() => {
     if (tab !== 'wiki' || !appId) return
     let cancelled = false
     const loadWiki = async () => {
       setWikiLoading(true)
       try {
-        const [wikiRes, statusRes] = await Promise.all([
-          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`),
-          apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki/status`).catch(() => null),
-        ])
-        if (!cancelled) {
-          setWikiMarkdown(wikiRes.data?.markdown || '')
-          setWikiSource(wikiRes.data?.source || null)
-          setWikiStatus(statusRes?.data?.status || wikiRes.data?.status?.status || null)
-          setMemberReadiness(statusRes?.data?.member_readiness || null)
-        }
+        await refreshWikiStatus()
       } catch {
         if (!cancelled) {
           setWikiMarkdown(null)
@@ -195,24 +219,22 @@ export default function ApplicationDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [tab, appId])
+  }, [tab, appId, refreshWikiStatus])
+
+  useEffect(() => {
+    if (tab !== 'wiki' || wikiStatus !== 'running') return
+    const t = setInterval(() => {
+      void refreshWikiStatus()
+    }, 4000)
+    return () => clearInterval(t)
+  }, [tab, wikiStatus, refreshWikiStatus])
 
   const pollAppWikiUntilDone = async () => {
     setWikiStatus('running')
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 90; i++) {
       await new Promise((r) => setTimeout(r, 2000))
-      const statusRes = await apiClient.get(
-        `/api/v1/intelligence/applications/${appId}/wiki/status`
-      )
-      const st = statusRes.data?.status
-      setWikiStatus(st || null)
-      setMemberReadiness(statusRes.data?.member_readiness || null)
-      if (st === 'completed' || st === 'failed') {
-        const wikiRes = await apiClient.get(`/api/v1/intelligence/applications/${appId}/wiki`)
-        setWikiMarkdown(wikiRes.data?.markdown || '')
-        setWikiSource(wikiRes.data?.source || null)
-        break
-      }
+      const st = await refreshWikiStatus()
+      if (st === 'completed' || st === 'failed') break
     }
   }
 
@@ -240,33 +262,30 @@ export default function ApplicationDetailPage() {
     }
   }
 
+  const cancelAppWiki = async () => {
+    if (!appId) return
+    setWikiCancelling(true)
+    try {
+      await apiClient.post(`/api/v1/intelligence/applications/${appId}/wiki/cancel`)
+      await refreshWikiStatus()
+      setWikiBanner('Application wiki cancelled. You can Generate again (uses API, not Copilot CLI).')
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setWikiBanner(detail || 'Failed to cancel application wiki')
+    } finally {
+      setWikiCancelling(false)
+    }
+  }
+
   if (!hasPermission('can_use_intelligence')) return null
 
   const unassignedRepos = allRepos.filter((r) => !r.application || r.application.id === appId)
   const availableToAdd = unassignedRepos.filter(
     (r) => !app?.repositories.some((member) => member.id === r.id)
   )
-
-  const addRepository = async () => {
-    if (!addRepoId) return
-    setSaving(true)
-    try {
-      await apiClient.post(`/api/v1/intelligence/applications/${appId}/repositories`, {
-        repository_id: addRepoId,
-        role: addRole,
-      })
-      setAddRepoId('')
-      await load()
-    } catch (err: unknown) {
-      const detail =
-        err && typeof err === 'object' && 'response' in err
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : null
-      setError(detail || 'Failed to add repository')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const removeRepository = async (repositoryId: string) => {
     setSaving(true)
@@ -466,45 +485,12 @@ export default function ApplicationDetailPage() {
               </ul>
             )}
 
-            {availableToAdd.length > 0 && (
-              <div className="flex flex-col gap-3 rounded-md border bg-muted/30 p-4 sm:flex-row sm:items-end">
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="add-repo">Add repository</Label>
-                  <select
-                    id="add-repo"
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={addRepoId}
-                    onChange={(e) => setAddRepoId(e.target.value)}
-                  >
-                    <option value="">Select repository</option>
-                    {availableToAdd.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.github_full_name || r.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="add-role">Role</Label>
-                  <select
-                    id="add-role"
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm capitalize sm:w-[140px]"
-                    value={addRole}
-                    onChange={(e) => setAddRole(e.target.value)}
-                  >
-                    {REPO_ROLES.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button onClick={addRepository} disabled={!addRepoId || saving}>
-                  <Plus className="h-4 w-4" />
-                  Add
-                </Button>
-              </div>
-            )}
+            <ApplicationRepoAttachPanel
+              applicationId={appId}
+              availableRepos={availableToAdd}
+              onAttached={load}
+              disabled={saving}
+            />
           </CardContent>
         </Card>
       )}
@@ -532,30 +518,28 @@ export default function ApplicationDetailPage() {
                 {wikiSource === 'synthesized' && ' Showing synthesizer fallback until generation completes.'}
                 {wikiSource === 'generated' && ' Generated from cloned member repos.'}
               </CardDescription>
-              {wikiStatus && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Status: {wikiStatus}
-                </p>
-              )}
-              {memberReadiness && memberReadiness.total_count > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Member wikis: {memberReadiness.ready_count}/{memberReadiness.total_count} ready
-                  {!memberReadiness.all_ready
-                    ? ' — Generate will ask whether to proceed now or retry incomplete repos first.'
-                    : null}
-                </p>
-              )}
               {wikiBanner && (
-                <p className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-xs text-foreground">
+                <p className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
                   {wikiBanner}
                 </p>
               )}
             </div>
             <div className="flex shrink-0 gap-2">
+              {wikiStatus === 'running' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={wikiCancelling}
+                  onClick={() => void cancelAppWiki()}
+                >
+                  {wikiCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Cancel
+                </Button>
+              )}
               <Button
                 variant="default"
                 size="sm"
-                disabled={wikiGenerating || wikiStatus === 'running'}
+                disabled={wikiGenerating || wikiStatus === 'running' || wikiCancelling}
                 onClick={() => {
                   setWikiBanner(null)
                   setWikiGenerateOpen(true)
@@ -569,42 +553,154 @@ export default function ApplicationDetailPage() {
                 {wikiSource === 'generated' ? 'Regenerate' : 'Generate'}
               </Button>
               <Button variant="outline" size="sm" asChild>
-                <Link href={`/dashboard/intelligence/applications/${appId}/wiki-site`}>
+                <a
+                  href={`/wiki/applications/${appId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   View HTML
-                </Link>
+                </a>
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
-            {memberReadiness && memberReadiness.members.length > 0 && (
-              <ul className="mb-4 space-y-1.5 rounded-md border p-3">
-                {memberReadiness.members.map((m) => (
-                  <li
-                    key={m.repository_id}
-                    className="flex items-center justify-between gap-2 text-sm"
-                  >
-                    <Link
-                      href={`/dashboard/intelligence/repositories/${m.repository_id}`}
-                      className="truncate text-primary hover:underline"
-                    >
-                      {m.name}
-                    </Link>
+          <CardContent className="space-y-4">
+            {(wikiStatus || (memberReadiness && memberReadiness.total_count > 0)) && (
+              <div
+                className={cn(
+                  'rounded-lg border p-4',
+                  wikiStatus === 'running' && 'border-primary/30 bg-primary/5',
+                  wikiStatus === 'failed' && 'border-destructive/30 bg-destructive/5',
+                  wikiStatus === 'completed' && 'border-emerald-500/30 bg-emerald-500/5',
+                  !wikiStatus || wikiStatus === 'idle'
+                    ? 'border-border bg-muted/30'
+                    : null
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  {wikiStatus === 'running' ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  ) : wikiStatus === 'failed' ? (
+                    <AlertCircle className="h-5 w-5 text-destructive" />
+                  ) : wikiStatus === 'completed' || wikiSource === 'generated' ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  ) : (
+                    <BookOpen className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">
+                      {wikiStatus === 'running'
+                        ? 'Generating application wiki…'
+                        : wikiStatus === 'failed'
+                          ? 'Application wiki failed'
+                          : wikiStatus === 'completed' || wikiSource === 'generated'
+                            ? 'Application wiki ready'
+                            : 'Application wiki not generated yet'}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {wikiStatus === 'running'
+                        ? 'Cloning members and analyzing with the LLM API (not Copilot CLI).'
+                        : wikiStatus === 'failed'
+                          ? 'Use Cancel if stuck, then Generate again for a full Deep Wiki HTML site.'
+                          : 'Uses the same HTML template as repository wikis (sidebar, Mermaid, sections).'}
+                    </p>
+                  </div>
+                  {wikiStatus && (
                     <Badge
-                      variant={m.wiki_ready ? 'default' : m.repo_status === 'error' ? 'destructive' : 'outline'}
-                      className="shrink-0 capitalize"
+                      variant={
+                        wikiStatus === 'failed'
+                          ? 'destructive'
+                          : wikiStatus === 'running'
+                            ? 'default'
+                            : 'secondary'
+                      }
+                      className="capitalize"
                     >
-                      {m.wiki_ready
-                        ? 'Wiki ready'
-                        : m.index_run_status === 'running' || m.index_run_status === 'pending'
-                          ? `Analyzing ${m.index_progress ?? 0}%`
-                          : m.repo_status}
+                      {wikiStatus}
                     </Badge>
-                  </li>
-                ))}
-              </ul>
+                  )}
+                </div>
+
+                {memberReadiness && memberReadiness.total_count > 0 && (
+                  <div className="mt-4 space-y-3 border-t pt-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">Member repository wikis</p>
+                      <p className="text-sm tabular-nums text-muted-foreground">
+                        {memberReadiness.ready_count}/{memberReadiness.total_count} ready
+                      </p>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{
+                          width: `${Math.max(
+                            4,
+                            Math.round(
+                              (100 * memberReadiness.ready_count) /
+                                Math.max(memberReadiness.total_count, 1)
+                            )
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <ul className="grid gap-2 sm:grid-cols-2">
+                      {memberReadiness.members.map((m) => (
+                        <li
+                          key={m.repository_id}
+                          className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2"
+                        >
+                          <Link
+                            href={`/dashboard/intelligence/repositories/${m.repository_id}`}
+                            className="truncate text-sm font-medium text-primary hover:underline"
+                          >
+                            {m.name}
+                          </Link>
+                          <Badge
+                            variant={
+                              m.wiki_ready
+                                ? 'default'
+                                : m.repo_status === 'error'
+                                  ? 'destructive'
+                                  : 'outline'
+                            }
+                            className="shrink-0 capitalize"
+                          >
+                            {m.wiki_ready
+                              ? 'Wiki ready'
+                              : m.index_run_status === 'running' ||
+                                  m.index_run_status === 'pending'
+                                ? `Analyzing ${m.index_progress ?? 0}%`
+                                : m.repo_status}
+                          </Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
+
             {wikiLoading ? (
               <Skeleton className="h-64 w-full" />
+            ) : wikiHtmlPreview ? (
+              <div className="overflow-hidden rounded-lg border">
+                <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+                  <p className="text-sm font-medium">HTML wiki preview</p>
+                  <Button variant="link" size="sm" className="h-auto px-0" asChild>
+                    <a
+                      href={`/wiki/applications/${appId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open full page
+                    </a>
+                  </Button>
+                </div>
+                <WikiHtmlIframe
+                  title="Application wiki HTML"
+                  html={wikiHtmlPreview}
+                  className="h-[70vh] w-full border-0 bg-white"
+                />
+              </div>
             ) : wikiMarkdown ? (
               <WikiMarkdownContent content={wikiMarkdown} />
             ) : (

@@ -119,6 +119,40 @@ def get_application_workspace_repos_dir(tenant_id: str, application_id: str) -> 
     return get_application_workspace_dir(tenant_id, application_id) / "repos"
 
 
+def get_repository_wiki_status(repository: Repository) -> Dict[str, Any]:
+    """Return wiki marker status for a repository analysis dir."""
+    analysis_dir = resolve_analysis_dir(repository)
+    status = "idle"
+    detail = ""
+    if (analysis_dir / "WIKI_STARTED").is_file():
+        status = "running"
+        detail = (analysis_dir / "WIKI_STARTED").read_text(encoding="utf-8").strip()
+    elif (analysis_dir / "WIKI_FAILED").is_file():
+        status = "failed"
+        detail = (analysis_dir / "WIKI_FAILED").read_text(encoding="utf-8").strip()
+    elif (analysis_dir / "WIKI_COMPLETED").is_file():
+        status = "completed"
+        detail = (analysis_dir / "WIKI_COMPLETED").read_text(encoding="utf-8").strip()
+
+    cli_pid: Optional[int] = None
+    pid_path = analysis_dir / "WIKI_CLI_PID"
+    if pid_path.is_file():
+        try:
+            cli_pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            cli_pid = None
+
+    return {
+        "status": status,
+        "detail": detail,
+        "analysis_dir": str(analysis_dir),
+        "has_wiki_json": (analysis_dir / WIKI_JSON_NAME).is_file(),
+        "has_wiki_html": (analysis_dir / WIKI_HTML_NAME).is_file(),
+        "has_wiki_md": (analysis_dir / WIKI_MD_NAME).is_file(),
+        "cli_pid": cli_pid,
+    }
+
+
 def get_application_wiki_status(tenant_id: str, application_id: str) -> Dict[str, Any]:
     """Return wiki marker status for an application analysis dir."""
     analysis_dir = get_application_analysis_dir(tenant_id, application_id)

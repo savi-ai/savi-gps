@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import Application, ApplicationRepository, Repository
 
-REPO_ROLES = ("backend", "frontend", "api", "worker", "infra", "library", "other")
+REPO_ROLES = ("unknown", "backend", "frontend", "api", "worker", "infra", "library", "other")
 
 
 class ApplicationService:

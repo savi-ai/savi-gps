@@ -60,7 +60,7 @@ interface AppOption {
 
 export default function AdminTeamsPage() {
   const router = useRouter()
-  const { hasPermission, hasRole } = useAuth()
+  const { hasPermission, hasRole, hasCapability } = useAuth()
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [selected, setSelected] = useState<TeamDetail | null>(null)
   const [apps, setApps] = useState<AppOption[]>([])
@@ -71,7 +71,8 @@ export default function AdminTeamsPage() {
   const [attachAppId, setAttachAppId] = useState('')
 
   const canManage =
-    hasPermission('can_manage_teams') || hasPermission('can_manage_tenant_config')
+    hasCapability('teams') &&
+    (hasPermission('can_manage_teams') || hasPermission('can_manage_tenant_config'))
 
   const loadTeams = useCallback(async () => {
     const res = await apiClient.get('/api/v1/teams')

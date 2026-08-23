@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import CodeChunk, IndexRun, Repository, WikiPage
 from app.core.logger import logger
+from app.core.pipeline_log import PipelineTimer, log_pipeline
 from app.services.intelligence.code_chunker import chunk_repository, scan_for_secrets
 from app.services.intelligence.embeddings_client import get_embeddings_client
 from app.services.intelligence.github_credential_service import GitHubCredentialService
@@ -105,6 +106,13 @@ class IndexerService:
                 repo.last_index_error = run.error
             count += 1
             logger.warning("Reclaimed orphaned index run %s", run.id)
+            log_pipeline(
+                stage="index_run",
+                status="warn",
+                message="Orphaned run reclaimed after worker restart",
+                repository_id=run.repository_id,
+                index_run_id=run.id,
+            )
         if count:
             self.db.commit()
         return count
@@ -147,6 +155,17 @@ class IndexerService:
             run.completed_at = datetime.now()
             self.db.commit()
             return
+
+        repo_label = repository.github_full_name or repository.name
+        log_pipeline(
+            stage="index_run",
+            status="start",
+            message="Index run picked up by worker",
+            repository_id=repository.id,
+            repository_name=repo_label,
+            index_run_id=run.id,
+            tenant_id=repository.tenant_id,
+        )
 
         clone_svc = RepoCloneService()
         clone_path: Optional[str] = None
@@ -220,6 +239,15 @@ class IndexerService:
             analysis_dir = None
             graph_index = None
             if clone_path:
+                log_pipeline(
+                    stage="index_graph",
+                    status="start",
+                    message="Building graph index and analysis artifacts",
+                    repository_id=repository.id,
+                    repository_name=repo_label,
+                    index_run_id=run.id,
+                    tenant_id=repository.tenant_id,
+                )
                 from app.services.intelligence.analysis_storage import (
                     get_analysis_dir,
                     migrate_legacy_analysis_dir,
@@ -276,11 +304,36 @@ class IndexerService:
                     clone_path,
                     index_run_id=run.id,
                 )
+                log_pipeline(
+                    stage="index_graph",
+                    status="ok",
+                    message="Graph index and views persisted",
+                    repository_id=repository.id,
+                    repository_name=repo_label,
+                    index_run_id=run.id,
+                    tenant_id=repository.tenant_id,
+                )
 
-            wiki_svc = WikiAgentService(self.db)
-            await wiki_svc.generate_for_repository(
-                repository, chunks, loc, index_run_id=run.id, clone_path=clone_path
+            log_pipeline(
+                stage="index_wiki",
+                status="start",
+                message="Wiki agent starting (CLI and/or API)",
+                repository_id=repository.id,
+                repository_name=repo_label,
+                index_run_id=run.id,
+                tenant_id=repository.tenant_id,
             )
+            wiki_svc = WikiAgentService(self.db)
+            with PipelineTimer(
+                "index_wiki",
+                repository_id=repository.id,
+                repository_name=repo_label,
+                index_run_id=run.id,
+                tenant_id=repository.tenant_id,
+            ):
+                await wiki_svc.generate_for_repository(
+                    repository, chunks, loc, index_run_id=run.id, clone_path=clone_path
+                )
 
             if clone_path:
                 DomainGraphService(self.db).enrich_architecture_page(repository)
@@ -292,6 +345,16 @@ class IndexerService:
             repository.last_indexed_at = datetime.now()
             repository.last_index_error = None
             self.db.commit()
+            log_pipeline(
+                stage="index_run",
+                status="ok",
+                message=f"Index completed — {len(chunks)} chunks, {loc} LOC",
+                repository_id=repository.id,
+                repository_name=repo_label,
+                index_run_id=run.id,
+                tenant_id=repository.tenant_id,
+                extra={"chunk_count": len(chunks), "loc": loc},
+            )
             logger.info(f"Index run {run.id} completed — {len(chunks)} chunks, {loc} LOC")
 
             try:
@@ -316,6 +379,15 @@ class IndexerService:
 
         except Exception as e:
             logger.error(f"Index run {run.id} failed: {e}")
+            log_pipeline(
+                stage="index_run",
+                status="error",
+                message=str(e)[:500],
+                repository_id=repository.id if repository else None,
+                repository_name=(repository.github_full_name or repository.name) if repository else None,
+                index_run_id=run.id,
+                tenant_id=repository.tenant_id if repository else None,
+            )
             run.status = "failed"
             run.error = str(e)[:2000]
             run.completed_at = datetime.now()
@@ -355,17 +427,21 @@ class IndexerService:
         schedule_application_wiki(repository.tenant_id, membership.application_id)
 
     def to_status_dict(self, repository: Repository, run: Optional[IndexRun]) -> Dict[str, Any]:
+        from app.services.intelligence.analysis_storage import get_repository_wiki_status
+
         chunk_count = (
             self.db.query(CodeChunk).filter(CodeChunk.repository_id == repository.id).count()
         )
         page_count = (
             self.db.query(WikiPage).filter(WikiPage.repository_id == repository.id).count()
         )
+        wiki_status = get_repository_wiki_status(repository)
         return {
             "repository_id": repository.id,
             "repository_status": repository.status,
             "chunk_count": chunk_count,
             "wiki_page_count": page_count,
+            "wiki_status": wiki_status,
             "graph_stats": self._graph_stats(repository),
             "index_run": {
                 "id": run.id,

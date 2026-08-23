@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/axios'
-import { Search, Plus } from 'lucide-react'
+import { Search, Plus, Eye, Pencil, Trash2 } from 'lucide-react'
 import './policies.css'
 
 interface Policy {
@@ -468,31 +468,40 @@ export default function PoliciesPage() {
                         </div>
                       </td>
                       <td className="col-actions">
-                        <div className="policy-actions">
+                        <div className="policy-actions" role="group" aria-label="Policy actions">
                           <button
+                            type="button"
                             className="action-btn view"
                             onClick={() =>
                               router.push(`/dashboard/admin/policies/${policy.id}`)
                             }
-                            title="View"
+                            title="View policy"
+                            aria-label={`View ${policy.name}`}
                           >
-                            View
+                            <Eye className="action-icon" aria-hidden />
+                            <span className="action-label">View</span>
                           </button>
                           <button
+                            type="button"
                             className="action-btn edit"
                             onClick={() =>
                               router.push(`/dashboard/admin/policies/${policy.id}/edit`)
                             }
-                            title="Edit"
+                            title="Edit policy"
+                            aria-label={`Edit ${policy.name}`}
                           >
-                            Edit
+                            <Pencil className="action-icon" aria-hidden />
+                            <span className="action-label">Edit</span>
                           </button>
                           <button
+                            type="button"
                             className="action-btn delete"
                             onClick={() => handleDelete(policy.id, policy.name)}
-                            title="Delete"
+                            title="Delete policy"
+                            aria-label={`Delete ${policy.name}`}
                           >
-                            Delete
+                            <Trash2 className="action-icon" aria-hidden />
+                            <span className="action-label">Delete</span>
                           </button>
                         </div>
                       </td>

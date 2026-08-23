@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { BookOpen, GitBranch, Layers, Loader2, Save } from 'lucide-react'
 
-type Preset = 'wiki_only' | 'modernization' | 'full'
+type Preset = 'wiki_only' | 'alpha' | 'modernization' | 'full'
 
 const PRESETS: {
   id: Preset
@@ -18,27 +18,66 @@ const PRESETS: {
   description: string
   caps: TenantCapabilities & { fleet?: boolean }
   icon: React.ComponentType<{ className?: string }>
+  badge?: string
 }[] = [
+  {
+    id: 'alpha',
+    title: 'Alpha (recommended)',
+    description: 'Wiki, chat, search, and assessments. Teams / Build / Portfolio stay off.',
+    caps: {
+      build: false,
+      intelligence: true,
+      fleet: false,
+      modernize: true,
+      portfolio: false,
+      teams: false,
+    },
+    icon: BookOpen,
+    badge: 'Alpha',
+  },
   {
     id: 'wiki_only',
     title: 'Wiki only',
-    description: 'Intelligence only — repositories, wiki, chat, search.',
-    caps: { build: false, intelligence: true, fleet: false, modernize: false, portfolio: true },
+    description: 'Intelligence only — repositories, wiki, chat, search (no assessments).',
+    caps: {
+      build: false,
+      intelligence: true,
+      fleet: false,
+      modernize: false,
+      portfolio: false,
+      teams: false,
+    },
     icon: BookOpen,
   },
   {
     id: 'modernization',
-    title: 'Legacy modernization',
-    description: 'Intelligence + Build — understand legacy code, then modernize with agents.',
-    caps: { build: true, intelligence: true, fleet: false, modernize: true, portfolio: true },
+    title: 'Modernization + Build (Beta preview)',
+    description: 'Intelligence + assessments + Idea→production Projects. Still early.',
+    caps: {
+      build: true,
+      intelligence: true,
+      fleet: false,
+      modernize: true,
+      portfolio: false,
+      teams: false,
+    },
     icon: GitBranch,
+    badge: 'Beta',
   },
   {
     id: 'full',
-    title: 'Full platform',
-    description: 'Build + Intelligence + Fleet (when fleet is enabled server-side).',
-    caps: { build: true, intelligence: true, fleet: true, modernize: true, portfolio: true },
+    title: 'Full platform (testing)',
+    description: 'Turn on Build, Teams, Portfolio, and Fleet when server flags allow.',
+    caps: {
+      build: true,
+      intelligence: true,
+      fleet: true,
+      modernize: true,
+      portfolio: true,
+      teams: true,
+    },
     icon: Layers,
+    badge: 'Test',
   },
 ]
 
@@ -46,11 +85,12 @@ export default function TenantSettingsPage() {
   const router = useRouter()
   const { hasPermission, currentTenant, refreshTenantConfig } = useAuth()
   const [caps, setCaps] = useState<TenantCapabilities>({
-    build: true,
+    build: false,
     intelligence: false,
     fleet: false,
     modernize: false,
     portfolio: false,
+    teams: false,
   })
   const [assessmentSettings, setAssessmentSettings] = useState({
     auto_assess_on_repo_index: false,
@@ -97,11 +137,12 @@ export default function TenantSettingsPage() {
       setLoading(true)
       const res = await apiClient.get('/api/v1/tenant-config/me')
       setCaps({
-        build: true,
+        build: false,
         intelligence: false,
         fleet: false,
         modernize: false,
         portfolio: false,
+        teams: false,
         ...res.data.capabilities,
       })
       setAssessmentSettings({
@@ -281,8 +322,8 @@ export default function TenantSettingsPage() {
         <CardHeader>
           <CardTitle className="text-base">Platform presets</CardTitle>
           <CardDescription>
-            To use <strong>both Intelligence and legacy modernization</strong>, choose{' '}
-            <strong>Legacy modernization</strong> or <strong>Full platform</strong>.
+            Choose <strong>Alpha</strong> for the public surface. Use Beta/Test presets or custom
+            checkboxes below to unlock Teams, Build, or Portfolio for internal testing.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
@@ -302,12 +343,18 @@ export default function TenantSettingsPage() {
                     <Icon className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <p className="font-medium">{preset.title}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="font-medium">{preset.title}</p>
+                      {preset.badge ? (
+                        <Badge variant="secondary">{preset.badge}</Badge>
+                      ) : null}
+                    </div>
                     <p className="text-sm text-muted-foreground">{preset.description}</p>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {preset.caps.intelligence && <Badge variant="outline">Intelligence</Badge>}
-                      {preset.caps.build && <Badge variant="outline">Build</Badge>}
                       {preset.caps.modernize && <Badge variant="outline">Modernize</Badge>}
+                      {preset.caps.build && <Badge variant="outline">Build</Badge>}
+                      {preset.caps.teams && <Badge variant="outline">Teams</Badge>}
                       {preset.caps.portfolio && <Badge variant="outline">Portfolio</Badge>}
                       {preset.caps.fleet && <Badge variant="outline">Fleet</Badge>}
                     </div>
@@ -669,16 +716,40 @@ export default function TenantSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Custom capabilities</CardTitle>
-          <CardDescription>Fine-tune modules independently (admin only).</CardDescription>
+          <CardDescription>
+            Fine-tune modules for testing. Alpha ships Intelligence + Modernize; leave others off for
+            demos.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {(
             [
-              ['build', 'Build', 'Idea → features → stories → architecture → code → tests'],
-              ['intelligence', 'Intelligence', 'Repositories, wiki, chat, search, specs'],
-              ['modernize', 'Modernize', 'Assessments, plans, playbooks — legacy modernization'],
-              ['portfolio', 'Portfolio', 'CTO/CIO health, risk, cost, and trends (read-only)'],
-              ['fleet', 'Fleet', 'Fleet remediation and approval queue (Phase 5)'],
+              [
+                'intelligence',
+                'Intelligence (Alpha)',
+                'Repositories, applications, wiki, chat, search',
+              ],
+              [
+                'modernize',
+                'Modernize (Alpha assessments)',
+                'Assessments from analysis config; plans are early Beta preview',
+              ],
+              [
+                'build',
+                'Build (Beta)',
+                'Projects — Idea → features → stories → architecture → code → tests',
+              ],
+              [
+                'teams',
+                'Teams / Virtual Engineer (Beta)',
+                'Admin Teams, Savi Teammate roster, inbox, PR orchestration',
+              ],
+              [
+                'portfolio',
+                'Portfolio (Dec 2026)',
+                'CTO/CIO health, risk, cost, and trends',
+              ],
+              ['fleet', 'Fleet (later)', 'Fleet remediation and approval queue'],
             ] as const
           ).map(([key, label, desc]) => (
             <label
