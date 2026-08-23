@@ -20,6 +20,7 @@ from app.services.intelligence.analysis_storage import (
     get_application_analysis_dir,
 )
 from app.services.modernize.application_readiness import compute_application_readiness
+from app.services.modernize.effort_estimator import enrich_assessment
 from app.services.modernize.readiness_scorer import compute_readiness
 from app.services.tenant_config_service import TenantConfigService
 
@@ -187,14 +188,27 @@ class AssessmentService:
         repository: Repository,
         *,
         trigger: str = "manual",
+        use_llm: Optional[bool] = None,
     ) -> Dict[str, Any]:
         readiness = compute_readiness(self.db, repository)
+        # LLM synthesis only on explicit Run assessment / Create plan (saves credits on auto)
+        if use_llm is None:
+            use_llm = trigger in ("manual", "plan_create")
         payload = {
             **readiness,
             "assessed": True,
             "assessed_at": _iso_now(),
             "trigger": trigger,
         }
+        payload = enrich_assessment(
+            self.db,
+            payload,
+            tenant_id=repository.tenant_id,
+            entity_type="repository",
+            entity_id=repository.id,
+            repository=repository,
+            use_llm=bool(use_llm),
+        )
         _write_json(_repo_path(repository), payload)
         try:
             _persist_repo_view(self.db, repository, payload)
@@ -202,10 +216,12 @@ class AssessmentService:
             logger.warning("Could not persist readiness view row: %s", e)
             self.db.rollback()
         logger.info(
-            "Repo assessment %s score=%s trigger=%s",
+            "Repo assessment %s score=%s trigger=%s effort=%sh synth=%s",
             repository.id,
             payload.get("overall_score"),
             trigger,
+            (payload.get("agent_effort") or {}).get("estimated_agent_hours"),
+            (payload.get("synthesis") or {}).get("source"),
         )
         return payload
 
@@ -216,8 +232,11 @@ class AssessmentService:
         *,
         trigger: str = "manual",
         reassess_members: bool = True,
+        use_llm: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Assess the whole application: optional per-member recompute, then aggregate."""
+        if use_llm is None:
+            use_llm = trigger in ("manual", "plan_create")
         memberships = (
             self.db.query(ApplicationRepository, Repository)
             .join(Repository, ApplicationRepository.repository_id == Repository.id)
@@ -227,7 +246,8 @@ class AssessmentService:
         if reassess_members:
             for _, repo in memberships:
                 if repo.status == "ready":
-                    self.run_repo_assessment(repo, trigger=trigger)
+                    # Member recompute: heuristic only; one LLM pass on the roll-up
+                    self.run_repo_assessment(repo, trigger=trigger, use_llm=False)
 
         # Aggregate from freshly stored member results when possible
         repo_rows: List[Dict[str, Any]] = []
@@ -319,12 +339,24 @@ class AssessmentService:
                 "trigger": trigger,
             }
 
+        payload = enrich_assessment(
+            self.db,
+            payload,
+            tenant_id=tenant_id,
+            entity_type="application",
+            entity_id=application_id,
+            repository=None,
+            use_llm=bool(use_llm),
+            wiki_excerpt="",  # app roll-up uses member signal text; wiki optional later
+        )
         _write_json(_app_path(tenant_id, application_id), payload)
         logger.info(
-            "Application assessment %s score=%s trigger=%s",
+            "Application assessment %s score=%s trigger=%s effort=%sh synth=%s",
             application_id,
             payload.get("overall_score"),
             trigger,
+            (payload.get("agent_effort") or {}).get("estimated_agent_hours"),
+            (payload.get("synthesis") or {}).get("source"),
         )
         return payload
 

@@ -47,6 +47,13 @@ export default function NewProjectPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { hasPermission, hasCapability } = useAuth()
+
+  useEffect(() => {
+    if (!hasCapability('build')) {
+      router.push('/dashboard')
+    }
+  }, [hasCapability, router])
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -91,6 +98,10 @@ export default function NewProjectPage() {
     setSelectedRepoIds((prev) =>
       prev.includes(repoId) ? prev.filter((id) => id !== repoId) : [...prev, repoId]
     )
+  }
+
+  if (!hasCapability('build')) {
+    return null
   }
 
   if (!hasPermission('can_create_project')) {

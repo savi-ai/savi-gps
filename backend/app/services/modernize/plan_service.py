@@ -74,11 +74,43 @@ def _default_plan_md(title: str, readiness: Dict[str, Any], playbook: Optional[M
     if overview.get("description"):
         lines.extend(["## Current state", overview["description"], ""])
 
+    synth = readiness.get("synthesis") or {}
+    if synth.get("narrative"):
+        lines.extend(["## Assessment narrative", synth["narrative"], ""])
+        recs = synth.get("prioritized_recommendations") or []
+        if recs:
+            lines.append("### Prioritized recommendations")
+            for r in recs:
+                lines.append(f"- {r}")
+            lines.append("")
+
     lines.append("## Readiness summary")
     lines.append(f"- Overall score: **{readiness.get('overall_score')}** ({readiness.get('readiness_level')})")
     for sig in readiness.get("signals") or []:
         lines.append(f"- {sig['label']}: {sig['value']} ({sig['status']})")
     lines.append("")
+
+    effort = readiness.get("agent_effort") or {}
+    if effort:
+        lines.append("## Agent effort estimate")
+        lines.append(
+            f"- Band: **{effort.get('band')}** · "
+            f"**{effort.get('estimated_agent_hours')}** agent-hours "
+            f"(confidence: {effort.get('confidence')})"
+        )
+        lines.append(f"- _{effort.get('disclaimer') or 'Agent effort ≠ calendar developer weeks'}_")
+        for stage in effort.get("stage_breakdown") or []:
+            lines.append(
+                f"- {stage.get('stage')}: {stage.get('agent_hours')}h"
+                + (f" — {stage['notes']}" if stage.get("notes") else "")
+            )
+        assumptions = effort.get("assumptions") or []
+        if assumptions:
+            lines.append("")
+            lines.append("### Assumptions")
+            for a in assumptions:
+                lines.append(f"- {a}")
+        lines.append("")
 
     if playbook:
         lines.extend([f"## Playbook: {playbook.name}", playbook.description or "", ""])
@@ -98,6 +130,13 @@ def _default_plan_md(title: str, readiness: Dict[str, Any], playbook: Optional[M
         "- [ ] Define target runtime and framework versions",
         "- [ ] Identify breaking changes and migration order",
         "- [ ] Plan test strategy and rollout",
+        "",
+        "## Recommended sequencing",
+        "1. Requirements — lock target stack and acceptance from assessment signals",
+        "2. Tasks — decompose into agent-executable work items",
+        "3. Code — implement upgrades/refactors",
+        "4. Test — verify against acceptance",
+        "5. Push — open PR to the configured target repository",
         "",
     ])
     return "\n".join(lines)

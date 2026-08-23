@@ -7,6 +7,7 @@ from typing import Optional
 
 from app.core.database import SessionLocal
 from app.core.logger import logger
+from app.core.pipeline_log import log_pipeline
 from app.services.intelligence.indexer_service import IndexerService
 
 _worker_running = False
@@ -16,6 +17,7 @@ _worker_task: Optional[asyncio.Task] = None
 async def _index_worker_loop() -> None:
     global _worker_running
     logger.info("Intelligence index worker started")
+    log_pipeline(stage="index_worker", status="start", message="Index worker loop started")
     _worker_running = True
     poll_interval = 3
 
@@ -25,6 +27,11 @@ async def _index_worker_loop() -> None:
         n = IndexerService(db).reclaim_orphaned_runs()
         if n:
             logger.info("Reclaimed %s orphaned index run(s) on worker start", n)
+            log_pipeline(
+                stage="index_worker",
+                status="warn",
+                message=f"Reclaimed {n} orphaned index run(s) after restart",
+            )
         from app.services.intelligence.application_wiki_agent_service import (
             ApplicationWikiAgentService,
         )
@@ -46,6 +53,13 @@ async def _index_worker_loop() -> None:
                 for run in pending:
                     if not _worker_running:
                         break
+                    log_pipeline(
+                        stage="index_worker",
+                        status="start",
+                        message="Dequeuing pending index run",
+                        repository_id=run.repository_id,
+                        index_run_id=run.id,
+                    )
                     await indexer.execute_index_run(run)
             else:
                 await asyncio.sleep(poll_interval)

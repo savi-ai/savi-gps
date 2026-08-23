@@ -34,17 +34,17 @@ interface NavItem {
   path: string
   permission?: string
   roles?: string[]
-  capability?: 'build' | 'intelligence' | 'modernize' | 'portfolio'
+  capability?: 'build' | 'intelligence' | 'modernize' | 'portfolio' | 'teams' | 'fleet'
 }
 
 interface NavGroup {
   title: string
-  capability?: 'build' | 'intelligence' | 'modernize' | 'portfolio'
+  capability?: 'build' | 'intelligence' | 'modernize' | 'portfolio' | 'teams' | 'fleet'
   accentClass?: string
   items: NavItem[]
 }
 
-/** Canonical sidebar — Alpha ships only implemented surfaces (ADR-0002 + RELEASE_PLAN). */
+/** Canonical sidebar — Alpha ships gated surfaces; Beta modules stay capability-off. */
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Overview',
@@ -162,6 +162,7 @@ const NAV_GROUPS: NavGroup[] = [
         path: '/dashboard/admin/teams',
         permission: 'can_manage_tenant_config',
         roles: ['admin'],
+        capability: 'teams',
       },
       {
         id: 'admin-analysis-config',

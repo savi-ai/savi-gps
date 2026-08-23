@@ -2,42 +2,39 @@ Analyze the APPLICATION workspace at the path provided.
 
 This workspace contains MULTIPLE repositories under `repos/<slug>/`. Each subdirectory is one product component. A MANIFEST.json at the workspace root lists member repository names, roles, and relative paths.
 
-Goal: Create a comprehensive Application Wiki that documents:
-1. Each component/repo (purpose, architecture highlights, key APIs, tech stack)
-2. How the repos integrate and depend on each other
-3. High-level component interaction diagrams and service map
-4. Cross-cutting data flows and operational concerns
+Goal: Create a Deep Wiki–quality Application Wiki — same richness as a single-repo Savi wiki, but spanning every member.
 
 Do NOT treat this as a single-repo wiki. Explicitly cover multi-repo relationships.
+Do NOT write a short summary. Produce detailed, citation-backed documentation.
 
 HTML / Markdown sections (include whatever applies — do not hallucinate):
-- Application Overview (product purpose across all members)
-- Components (one subsection per member repo / role)
-- Integration & Dependencies (how components call, queue, share data, or auth)
+- Application Overview (product purpose, LOC/file stats if available, audience)
+- Functionality (cross-cutting capabilities as bullets)
+- Components (one deep subsection per member repo / role — purpose, key workflows, APIs, tech)
+- Integration & Dependencies (how components call, queue, share data, or auth — with evidence)
 - Service Map / Component Interaction (Mermaid)
-- Cross-Repo Data Flow
-- End-to-End Flows spanning multiple repos
-- Shared Technology Stack
-- Build, Deploy, and Local Multi-Repo Setup (if evidence exists)
+- Cross-Repo Data Flow and E2E Flows (Mermaid + narrative)
+- Shared Technology Stack (table-ready layers)
+- Build, Deploy, and Local Multi-Repo Setup
+- Business / domain rules that span repos
 - Any other sections that help teams and agents understand the system
 
-STYLE REFERENCE: Match the layout and quality of single-repo Deep Wiki (sticky TOC, Mermaid wrappers, citations).
+STYLE REFERENCE: Match the layout and quality of single-repo Deep Wiki
+(`wiki_site_template.html` / sample.html): sticky TOC, Mermaid wrappers, cards, citations.
 
 *** MULTI-REPO RULES ***
 
 - Cite files with paths relative to the workspace, e.g. `repos/api-service/src/main.py`.
 - Prefer MANIFEST roles (frontend, backend, library, …) when labeling components.
 - If a service-map Mermaid diagram is provided in context, refine or incorporate it — do not invent edges without evidence.
-- For each component, summarize from that repo's source (README, entrypoints, routers, services).
+- For each component, summarize from that repo's source (README, entrypoints, routers, services, *Impl*).
 - Integration section must explain contracts between repos (HTTP, events, shared DB, libraries).
+- Prefer depth: workflows with numbered steps, business rules, and API lists — not one-line blurbs.
 
 OUTPUT FILES (write all to the output directory only — never modify clones):
 - wiki_site.html — full standalone HTML wiki
 - wiki_site.md — same content as Markdown
-- wiki_result.json — structured JSON including:
-  - application_name, overview, components[], integration, dependencies
-  - diagrams (high_level_mermaid, service_map_mermaid, data_flow_mermaid, …)
-  - sections_md keys: overview, components, integration, dependencies, service_map, data_flow, build_deploy
+- wiki_result.json — structured JSON (see schema in the caller prompt)
 
 STATUS MARKERS (in output directory):
 - WIKI_STARTED — ISO timestamp when analysis begins

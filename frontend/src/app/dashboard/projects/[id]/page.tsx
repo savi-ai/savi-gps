@@ -27,7 +27,7 @@ export default function ProjectDetailPage() {
   const projectId = params.id as string
   const spawnedFromPlan = searchParams.get('spawned') === '1'
   const fromPlanId = searchParams.get('from_plan')
-  const { user, hasPermission, hasRole } = useAuth()
+  const { user, hasPermission, hasRole, hasCapability } = useAuth()
   
   const { data: project, isLoading: loading, error: queryError, refetch } = useProject(projectId)
   const error = queryError ? (queryError as Error).message : null
@@ -36,6 +36,12 @@ export default function ProjectDetailPage() {
   const [runningWorkflow, setRunningWorkflow] = useState(false)
   const [workflowRunError, setWorkflowRunError] = useState<string | null>(null)
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!hasCapability('build')) {
+      router.push('/dashboard')
+    }
+  }, [hasCapability, router])
 
   useEffect(() => {
     if (project?.current_step) {
@@ -133,6 +139,10 @@ export default function ProjectDetailPage() {
     } finally {
       setRunningWorkflow(false)
     }
+  }
+
+  if (!hasCapability('build')) {
+    return null
   }
 
   if (loading) {

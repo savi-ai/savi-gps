@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, CheckCircle2, RefreshCw, XCircle, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, RefreshCw, XCircle, AlertTriangle, FileText } from 'lucide-react'
 import { WikiMarkdownContent } from '@/components/intelligence/WikiMarkdownContent'
 import { WikiChatPanel } from '@/components/intelligence/WikiChatPanel'
 
@@ -151,6 +151,12 @@ export default function WikiPageReader() {
   }
 
   const coveragePct = Math.round((page.citation_coverage || 0) * 100)
+  const proseLen = (page.content_md || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^#{1,6}\s+.*$/gm, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length
+  const isThinSection = proseLen < 280
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -175,12 +181,45 @@ export default function WikiPageReader() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              window.open(`/wiki/repositories/${repoId}`, '_blank', 'noopener,noreferrer')
+            }
+          >
+            <FileText className="h-4 w-4" />
+            Full Wiki
+          </Button>
           <Button variant="outline" size="sm" onClick={runVerify} disabled={actionLoading}>
             <RefreshCw className={`h-4 w-4 ${actionLoading ? 'animate-spin' : ''}`} />
             Re-verify
           </Button>
         </div>
       </div>
+
+      {isThinSection && (
+        <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
+          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              This review page still looks light. The Full Wiki HTML site may have richer diagrams
+              and narrative compiled from the same analysis — open it, or re-index the repository
+              to regenerate sections.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() =>
+                window.open(`/wiki/repositories/${repoId}`, '_blank', 'noopener,noreferrer')
+              }
+            >
+              <FileText className="h-4 w-4" />
+              Open Full Wiki
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">

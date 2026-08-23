@@ -8,28 +8,38 @@ import uuid
 import os
 
 
-def _capability_flag(env_key: str) -> bool:
-    """Env override, else follow INTELLIGENCE_ENABLED."""
+def _capability_flag(env_key: str, *, default: Optional[bool] = None) -> bool:
+    """Env override; optional explicit default, else follow INTELLIGENCE_ENABLED."""
     raw = os.getenv(env_key)
     if raw is not None:
         return raw.lower() == "true"
+    if default is not None:
+        return default
     return settings.INTELLIGENCE_ENABLED
 
 
 def default_capabilities() -> Dict[str, bool]:
-    """Default tenant capabilities — Build on, Intelligence/Fleet gated by env flags."""
+    """Default tenant capabilities — Alpha surface on; Beta modules off unless env says so."""
     return {
-        "build": True,
+        "build": _capability_flag("BUILD_ENABLED", default=False),
         "intelligence": settings.INTELLIGENCE_ENABLED,
         "fleet": settings.FLEET_ENABLED,
-        "modernize": _capability_flag("MODERNIZE_ENABLED"),
-        "portfolio": _capability_flag("PORTFOLIO_ENABLED"),
+        "modernize": _capability_flag("MODERNIZE_ENABLED", default=settings.INTELLIGENCE_ENABLED),
+        "portfolio": _capability_flag("PORTFOLIO_ENABLED", default=False),
+        "teams": _capability_flag("TEAMS_ENABLED", default=False),
     }
 
 
-ONBOARDING_PATHS = ("wiki_only", "modernization", "full")
+ONBOARDING_PATHS = ("wiki_only", "alpha", "modernization", "full")
 
-ALL_CAPABILITY_KEYS = ("build", "intelligence", "fleet", "modernize", "portfolio")
+ALL_CAPABILITY_KEYS = (
+    "build",
+    "intelligence",
+    "fleet",
+    "modernize",
+    "portfolio",
+    "teams",
+)
 
 # Stored alongside capabilities in tenant_configs.capabilities JSON (non-boolean bag).
 ASSESSMENT_SETTINGS_KEY = "_assessment_settings"
@@ -78,7 +88,18 @@ def capabilities_for_onboarding(path: str) -> Dict[str, bool]:
             "intelligence": True,
             "fleet": False,
             "modernize": False,
-            "portfolio": settings.PORTFOLIO_ENABLED,
+            "portfolio": False,
+            "teams": False,
+        }
+    if path == "alpha":
+        # Public Alpha: wiki + chat + assessments. Beta modules off.
+        return {
+            "build": False,
+            "intelligence": True,
+            "fleet": False,
+            "modernize": True,
+            "portfolio": False,
+            "teams": False,
         }
     if path == "modernization":
         return {
@@ -86,15 +107,18 @@ def capabilities_for_onboarding(path: str) -> Dict[str, bool]:
             "intelligence": True,
             "fleet": False,
             "modernize": True,
-            "portfolio": settings.PORTFOLIO_ENABLED,
+            "portfolio": False,
+            "teams": False,
         }
     if path == "full":
+        # QA / internal testing — unlock upcoming modules regardless of env defaults.
         return {
             "build": True,
             "intelligence": True,
-            "fleet": settings.FLEET_ENABLED,
+            "fleet": True,
             "modernize": True,
-            "portfolio": settings.PORTFOLIO_ENABLED,
+            "portfolio": True,
+            "teams": True,
         }
     return default_capabilities()
 

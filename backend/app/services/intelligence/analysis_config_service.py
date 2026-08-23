@@ -11,13 +11,25 @@ from sqlalchemy.orm import Session
 from app.core.database import AnalysisAttributeDefinition, Repository, RepositoryAnalysisAttribute
 from app.core.logger import logger
 
-DEFAULT_ATTRIBUTES = [
+# Seed definitions: extraction for wiki + optional modernization assessment signals.
+DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
     {
         "key": "java_version",
         "label": "Java Version",
         "category": "runtime",
         "data_type": "string",
         "extraction_hint": "Extract from pom.xml <java.version> or maven.compiler.source",
+        "use_in_assessment": True,
+        "assessment_weight": 3,
+        "assessment_rules": {
+            "legacy_contains": ["1.8", "java 8", "java8", "jdk8"],
+            "warn_contains": ["11", "java 11"],
+            "good_contains": ["17", "21", "java 17", "java 21"],
+            "missing_score": 35,
+        },
+        "recommendation_template": (
+            "Plan a JDK upgrade path; Java 8/11 increase modernization risk and agent effort."
+        ),
     },
     {
         "key": "node_version",
@@ -25,6 +37,15 @@ DEFAULT_ATTRIBUTES = [
         "category": "runtime",
         "data_type": "string",
         "extraction_hint": "Extract from package.json engines.node",
+        "use_in_assessment": True,
+        "assessment_weight": 2,
+        "assessment_rules": {
+            "legacy_contains": ["10", "12", "14"],
+            "warn_contains": ["16"],
+            "good_contains": ["18", "20", "22"],
+            "missing_score": 40,
+        },
+        "recommendation_template": "Upgrade Node to an Active LTS release before large refactors.",
     },
     {
         "key": "python_version",
@@ -32,27 +53,15 @@ DEFAULT_ATTRIBUTES = [
         "category": "runtime",
         "data_type": "string",
         "extraction_hint": "Extract from pyproject.toml or .python-version",
-    },
-    {
-        "key": "golden_image",
-        "label": "Golden Image",
-        "category": "infra",
-        "data_type": "string",
-        "extraction_hint": "Extract FROM line in Dockerfile",
-    },
-    {
-        "key": "base_docker_image",
-        "label": "Base Docker Image",
-        "category": "infra",
-        "data_type": "string",
-        "extraction_hint": "First FROM instruction in Dockerfile",
-    },
-    {
-        "key": "database_type",
-        "label": "Database Type",
-        "category": "infra",
-        "data_type": "string",
-        "extraction_hint": "Infer from docker-compose, ORM config, or connection strings",
+        "use_in_assessment": True,
+        "assessment_weight": 2,
+        "assessment_rules": {
+            "legacy_contains": ["2.7", "3.6", "3.7", "3.8"],
+            "warn_contains": ["3.9"],
+            "good_contains": ["3.10", "3.11", "3.12", "3.13"],
+            "missing_score": 40,
+        },
+        "recommendation_template": "Move to a supported Python 3.10+ runtime for library and security support.",
     },
     {
         "key": "framework",
@@ -60,8 +69,108 @@ DEFAULT_ATTRIBUTES = [
         "category": "build",
         "data_type": "string",
         "extraction_hint": "e.g. FastAPI, Spring Boot, Next.js from dependencies",
+        "use_in_assessment": True,
+        "assessment_weight": 3,
+        "assessment_rules": {
+            "legacy_contains": [
+                "spring boot 1",
+                "spring boot 2",
+                "struts",
+                "jsf",
+                "angularjs",
+                "jquery",
+            ],
+            "warn_contains": ["spring boot 2.7", "vue 2", "react 16", "react 17"],
+            "good_contains": ["spring boot 3", "next.js", "fastapi", "react 18", "react 19"],
+            "missing_score": 45,
+        },
+        "recommendation_template": (
+            "Framework major upgrades are high-leverage modernization work — scope in the plan."
+        ),
+    },
+    {
+        "key": "spring_boot_version",
+        "label": "Spring Boot Version",
+        "category": "build",
+        "data_type": "string",
+        "extraction_hint": "Extract from pom.xml spring-boot-starter-parent or gradle",
+        "use_in_assessment": True,
+        "assessment_weight": 3,
+        "assessment_rules": {
+            "legacy_contains": ["1.", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5"],
+            "warn_contains": ["2.6", "2.7"],
+            "good_contains": ["3."],
+            "missing_score": 50,
+        },
+        "recommendation_template": "Spring Boot 2.x → 3.x is a common modernization track; estimate agent Code/Test stages accordingly.",
+    },
+    {
+        "key": "golden_image",
+        "label": "Golden Image",
+        "category": "infra",
+        "data_type": "string",
+        "extraction_hint": "Extract FROM line in Dockerfile",
+        "use_in_assessment": True,
+        "assessment_weight": 2,
+        "assessment_rules": {
+            "legacy_contains": ["jdk8", "java:8", "openjdk:8", "node:12", "node:14", "centos:7"],
+            "warn_contains": ["jdk11", "openjdk:11", "node:16"],
+            "good_contains": ["jdk17", "jdk21", "node:20", "node:22", "distroless", "alpine"],
+            "missing_score": 45,
+        },
+        "recommendation_template": "Align container base images with supported LTS runtimes and org golden images.",
+    },
+    {
+        "key": "base_docker_image",
+        "label": "Base Docker Image",
+        "category": "infra",
+        "data_type": "string",
+        "extraction_hint": "First FROM instruction in Dockerfile",
+        "use_in_assessment": False,
+        "assessment_weight": 1,
+        "assessment_rules": None,
+        "recommendation_template": None,
+    },
+    {
+        "key": "database_type",
+        "label": "Database Type",
+        "category": "infra",
+        "data_type": "string",
+        "extraction_hint": "Infer from docker-compose, ORM config, or connection strings",
+        "use_in_assessment": True,
+        "assessment_weight": 2,
+        "assessment_rules": {
+            "legacy_contains": ["db2", "sybase", "informix", "access"],
+            "warn_contains": ["oracle 11", "mysql 5.6", "mysql 5.7"],
+            "good_contains": ["postgres", "postgresql", "mysql 8", "mongodb", "dynamodb"],
+            "missing_score": 50,
+        },
+        "recommendation_template": "Data store choice drives migration risk — call out in Requirements/Tasks.",
+    },
+    {
+        "key": "ci_cd_present",
+        "label": "CI/CD Present",
+        "category": "build",
+        "data_type": "string",
+        "extraction_hint": "Detect .github/workflows, Jenkinsfile, .gitlab-ci.yml, azure-pipelines",
+        "use_in_assessment": True,
+        "assessment_weight": 2,
+        "assessment_rules": {
+            "legacy_contains": ["none", "missing", "no", "false"],
+            "good_contains": ["github actions", "gitlab", "jenkins", "azure", "circle", "yes", "true"],
+            "missing_score": 40,
+        },
+        "recommendation_template": "Add or modernize CI before large agent-driven code pushes.",
     },
 ]
+
+
+_ASSESSMENT_FIELDS = (
+    "use_in_assessment",
+    "assessment_weight",
+    "assessment_rules",
+    "recommendation_template",
+)
 
 
 class AnalysisConfigService:
@@ -70,6 +179,7 @@ class AnalysisConfigService:
 
     def seed_defaults(self, tenant_id: str, created_by: Optional[str] = None) -> int:
         created = 0
+        updated = 0
         for item in DEFAULT_ATTRIBUTES:
             exists = (
                 self.db.query(AnalysisAttributeDefinition)
@@ -80,6 +190,14 @@ class AnalysisConfigService:
                 .first()
             )
             if exists:
+                # Backfill assessment metadata on older seeds (no rules yet)
+                if exists.assessment_rules is None and item.get("use_in_assessment"):
+                    exists.use_in_assessment = bool(item.get("use_in_assessment"))
+                    exists.assessment_weight = int(item.get("assessment_weight") or 1)
+                    exists.assessment_rules = item.get("assessment_rules")
+                    exists.recommendation_template = item.get("recommendation_template")
+                    exists.updated_at = datetime.now()
+                    updated += 1
                 continue
             self.db.add(
                 AnalysisAttributeDefinition(
@@ -92,13 +210,22 @@ class AnalysisConfigService:
                     extraction_hint=item["extraction_hint"],
                     is_active=True,
                     is_searchable=True,
+                    use_in_assessment=bool(item.get("use_in_assessment")),
+                    assessment_weight=int(item.get("assessment_weight") or 1),
+                    assessment_rules=item.get("assessment_rules"),
+                    recommendation_template=item.get("recommendation_template"),
                     created_by=created_by,
                 )
             )
             created += 1
-        if created:
+        if created or updated:
             self.db.commit()
-            logger.info(f"Seeded {created} default analysis attributes for tenant {tenant_id}")
+            logger.info(
+                "Analysis attributes for tenant %s: created=%s assessment_backfill=%s",
+                tenant_id,
+                created,
+                updated,
+            )
         return created
 
     def list_definitions(self, tenant_id: str, active_only: bool = True) -> List[Dict[str, Any]]:
@@ -110,6 +237,23 @@ class AnalysisConfigService:
         defs = q.order_by(AnalysisAttributeDefinition.category, AnalysisAttributeDefinition.label).all()
         return [self._def_dict(d) for d in defs]
 
+    def list_assessment_definitions(self, tenant_id: str) -> List[Dict[str, Any]]:
+        """Active definitions flagged for modernization assessment."""
+        self.seed_defaults(tenant_id)
+        q = (
+            self.db.query(AnalysisAttributeDefinition)
+            .filter(
+                AnalysisAttributeDefinition.tenant_id == tenant_id,
+                AnalysisAttributeDefinition.is_active == True,
+                AnalysisAttributeDefinition.use_in_assessment == True,
+            )
+            .order_by(
+                AnalysisAttributeDefinition.assessment_weight.desc(),
+                AnalysisAttributeDefinition.label,
+            )
+        )
+        return [self._def_dict(d) for d in q.all()]
+
     def create_definition(
         self,
         tenant_id: str,
@@ -118,6 +262,11 @@ class AnalysisConfigService:
         category: str = "general",
         data_type: str = "string",
         extraction_hint: Optional[str] = None,
+        description: Optional[str] = None,
+        use_in_assessment: bool = False,
+        assessment_weight: int = 1,
+        assessment_rules: Optional[Dict[str, Any]] = None,
+        recommendation_template: Optional[str] = None,
         created_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         existing = (
@@ -136,11 +285,16 @@ class AnalysisConfigService:
             tenant_id=tenant_id,
             key=key,
             label=label,
+            description=description,
             category=category,
             data_type=data_type,
             extraction_hint=extraction_hint,
             is_active=True,
             is_searchable=True,
+            use_in_assessment=bool(use_in_assessment),
+            assessment_weight=max(1, min(5, int(assessment_weight or 1))),
+            assessment_rules=assessment_rules,
+            recommendation_template=recommendation_template,
             created_by=created_by,
         )
         self.db.add(defn)
@@ -162,9 +316,23 @@ class AnalysisConfigService:
         if not defn:
             raise ValueError("Definition not found")
 
-        for field in ("label", "description", "category", "data_type", "extraction_hint", "is_active", "is_searchable"):
-            if field in updates:
-                setattr(defn, field, updates[field])
+        allowed = (
+            "label",
+            "description",
+            "category",
+            "data_type",
+            "extraction_hint",
+            "is_active",
+            "is_searchable",
+            *_ASSESSMENT_FIELDS,
+        )
+        for field in allowed:
+            if field not in updates:
+                continue
+            value = updates[field]
+            if field == "assessment_weight" and value is not None:
+                value = max(1, min(5, int(value)))
+            setattr(defn, field, value)
         defn.updated_at = datetime.now()
         self.db.commit()
         return self._def_dict(defn)
@@ -264,6 +432,10 @@ class AnalysisConfigService:
             "extraction_hint": d.extraction_hint,
             "is_active": d.is_active,
             "is_searchable": d.is_searchable,
+            "use_in_assessment": bool(d.use_in_assessment),
+            "assessment_weight": int(d.assessment_weight or 1),
+            "assessment_rules": d.assessment_rules,
+            "recommendation_template": d.recommendation_template,
         }
 
     def _attr_dict(self, a: RepositoryAnalysisAttribute) -> Dict[str, Any]:

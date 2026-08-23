@@ -30,16 +30,17 @@ interface ActivityRow {
 
 export default function SaviActivityAdminPage() {
   const router = useRouter()
-  const { hasPermission, hasRole } = useAuth()
+  const { hasPermission, hasRole, hasCapability } = useAuth()
   const [items, setItems] = useState<ActivityRow[]>([])
   const [loading, setLoading] = useState(true)
   const [errorsOnly, setErrorsOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const canManage =
-    hasPermission('can_manage_teams') ||
-    hasPermission('can_manage_tenant_config') ||
-    hasRole('admin')
+    hasCapability('teams') &&
+    (hasPermission('can_manage_teams') ||
+      hasPermission('can_manage_tenant_config') ||
+      hasRole('admin'))
 
   const load = useCallback(async () => {
     const res = await apiClient.get('/api/v1/teams/savi-activity', {

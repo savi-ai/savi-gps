@@ -11,12 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import Repository, RepositoryWikiSite, WikiClaim, WikiPage
 from app.core.logger import logger
+from app.core.pipeline_log import PipelineTimer, log_pipeline
 from app.core.secret_redaction import redact_secrets
 from app.services.agents.wiki_agent import WikiAgent
 from app.services.intelligence.analysis_config_service import AnalysisConfigService
 from app.services.intelligence.analysis_storage import (
     META_NAME,
     WIKI_HTML_NAME,
+    WIKI_JSON_NAME,
     WIKI_MD_NAME,
     get_analysis_dir,
     mark_completed,
@@ -32,6 +34,12 @@ from app.services.intelligence.repo_clone_service import RepoCloneService
 from app.services.intelligence.wiki_git_refresh import (
     load_previous_wiki_json,
     plan_wiki_refresh,
+)
+from app.services.intelligence.wiki_section_specialist import enrich_thin_sections
+from app.services.intelligence.wiki_sections import (
+    build_section_md,
+    ensure_repo_sections_md,
+    is_section_thin,
 )
 
 
@@ -128,9 +136,28 @@ class WikiAgentService:
             mark_started(analysis_dir)
             write_analysis_config(analysis_dir, definitions)
 
+            from app.services.intelligence.wiki_generation_settings import (
+                resolve_wiki_generation_settings,
+            )
+
+            gen_settings = resolve_wiki_generation_settings(self.db, repository.tenant_id)
+            repo_label = repository.github_full_name or repository.name
             logger.info(
-                f"Wiki Agent starting for {repository.github_full_name or repository.name} "
-                f"→ {analysis_dir}"
+                f"Wiki Agent starting for {repo_label} → {analysis_dir}"
+            )
+            log_pipeline(
+                stage="wiki_generate",
+                status="start",
+                message=f"Wiki agent starting (mode={gen_settings.get('wiki_generation_mode')}, cli={gen_settings.get('agent_cli')})",
+                repository_id=repository.id,
+                repository_name=repo_label,
+                index_run_id=index_run_id,
+                tenant_id=repository.tenant_id,
+                extra={
+                    "generation_mode": gen_settings.get("wiki_generation_mode"),
+                    "agent_cli": gen_settings.get("agent_cli"),
+                    "llm_provider": gen_settings.get("llm_provider"),
+                },
             )
 
             extracted = []
@@ -138,11 +165,6 @@ class WikiAgentService:
                 extracted = extract_attributes(clone_path, definitions)
 
             agent = WikiAgent()
-            from app.services.intelligence.wiki_generation_settings import (
-                resolve_wiki_generation_settings,
-            )
-
-            gen_settings = resolve_wiki_generation_settings(self.db, repository.tenant_id)
             try:
                 state = await agent.process({
                     "repository": {
@@ -180,6 +202,7 @@ class WikiAgentService:
                 index_run_id=index_run_id,
                 git_head=git_head,
                 refresh_plan=refresh_plan,
+                chunks=chunks,
             )
         finally:
             if owned_clone and clone_path:
@@ -316,13 +339,113 @@ class WikiAgentService:
         index_run_id: Optional[str],
         git_head: Optional[str],
         refresh_plan: Any,
+        chunks: Optional[List[FileChunk]] = None,
     ) -> Dict[str, Any]:
+        repo_label = repository.github_full_name or repository.name
+        log_pipeline(
+            stage="wiki_persist",
+            status="start",
+            message="Persisting wiki artifacts to DB",
+            repository_id=repository.id,
+            repository_name=repo_label,
+            index_run_id=index_run_id,
+            tenant_id=repository.tenant_id,
+        )
+
         wiki_json = state.get("wiki_json", {})
         wiki_html = state.get("wiki_html", "")
-        sections_md = state.get("sections_md") or wiki_json.get("sections_md") or {}
         generation_source = state.get("generation_source", "wiki_agent")
         analysis_paths = state.get("analysis_paths", {})
         wiki_md = state.get("wiki_md")
+
+        # B: always synthesize review-page markdown from structured fields when thin/missing
+        if isinstance(wiki_json, dict):
+            ensure_repo_sections_md(wiki_json)
+            # W1.4: LLM specialist for sections still thin after compile (Arch/BL first)
+            code_snippets = ""
+            if chunks:
+                try:
+                    code_snippets = WikiAgent()._implementation_snippets(chunks, max_chars=12000)
+                except Exception as snip_err:
+                    logger.debug("Could not build specialist snippets: %s", snip_err)
+            try:
+                log_pipeline(
+                    stage="wiki_section_specialist",
+                    status="start",
+                    message="Enriching thin wiki sections via LLM",
+                    repository_id=repository.id,
+                    repository_name=repo_label,
+                    index_run_id=index_run_id,
+                    tenant_id=repository.tenant_id,
+                )
+                specialist_report = await enrich_thin_sections(
+                    wiki_json,
+                    db=self.db,
+                    tenant_id=repository.tenant_id,
+                    repository_id=repository.id,
+                    code_snippets=code_snippets,
+                    max_sections=5,
+                    use_llm=True,
+                )
+                if specialist_report.get("enriched"):
+                    generation_source = f"{generation_source}+section_specialist"
+                    state["sections_specialist"] = specialist_report
+                    log_pipeline(
+                        stage="wiki_section_specialist",
+                        status="ok",
+                        message=f"Enriched {len(specialist_report.get('enriched', []))} section(s)",
+                        repository_id=repository.id,
+                        repository_name=repo_label,
+                        index_run_id=index_run_id,
+                        tenant_id=repository.tenant_id,
+                        extra={"sections": specialist_report.get("enriched")},
+                    )
+                else:
+                    log_pipeline(
+                        stage="wiki_section_specialist",
+                        status="ok",
+                        message="No thin sections needed enrichment",
+                        repository_id=repository.id,
+                        repository_name=repo_label,
+                        index_run_id=index_run_id,
+                        tenant_id=repository.tenant_id,
+                    )
+                    # Keep on-disk wiki_result.json aligned with enriched sections
+                    try:
+                        json_path = analysis_dir / WIKI_JSON_NAME
+                        json_path.write_text(
+                            json.dumps(wiki_json, indent=2), encoding="utf-8"
+                        )
+                    except OSError as write_err:
+                        logger.warning(
+                            "Could not rewrite wiki_result.json after specialist: %s",
+                            write_err,
+                        )
+            except Exception as spec_err:
+                logger.warning(
+                    "Section specialist skipped for %s: %s",
+                    repository.id,
+                    redact_secrets(str(spec_err)),
+                )
+                log_pipeline(
+                    stage="wiki_section_specialist",
+                    status="warn",
+                    message=redact_secrets(str(spec_err))[:300],
+                    repository_id=repository.id,
+                    repository_name=repo_label,
+                    index_run_id=index_run_id,
+                    tenant_id=repository.tenant_id,
+                )
+
+        sections_md = (
+            state.get("sections_md")
+            or (wiki_json.get("sections_md") if isinstance(wiki_json, dict) else {})
+            or {}
+        )
+        if isinstance(wiki_json, dict) and isinstance(wiki_json.get("sections_md"), dict):
+            sections_md = wiki_json["sections_md"]
+            state["sections_md"] = sections_md
+            state["wiki_json"] = wiki_json
 
         merged_attrs = self._merge_attributes(
             extracted, wiki_json.get("analysis_attributes") or [], definitions
@@ -386,6 +509,16 @@ class WikiAgentService:
             f"refresh={getattr(refresh_plan, 'mode', None)}, "
             f"artifacts={analysis_dir}"
         )
+        log_pipeline(
+            stage="wiki_persist",
+            status="ok",
+            message=f"Wiki persisted — {len(pages)} page(s), source={generation_source}",
+            repository_id=repository.id,
+            repository_name=repo_label,
+            index_run_id=index_run_id,
+            tenant_id=repository.tenant_id,
+            extra={"page_count": len(pages), "generation_source": generation_source},
+        )
         result = {
             "wiki_site_id": site.id,
             "attribute_count": len(merged_attrs),
@@ -396,6 +529,8 @@ class WikiAgentService:
             "wiki_refresh_mode": getattr(refresh_plan, "mode", None),
             "git_head": git_head,
         }
+        if state.get("sections_specialist"):
+            result["sections_specialist"] = state["sections_specialist"]
         if export_result:
             result["github_export"] = export_result
         return result
@@ -467,7 +602,11 @@ class WikiAgentService:
         keep_slugs = set()
         sections = sections_md if isinstance(sections_md, dict) else {}
         for slug, title, template_type in self.SECTION_SLUGS:
-            content = sections.get(slug) or self._default_section(slug, wiki_json)
+            raw = sections.get(slug)
+            if is_section_thin(raw if isinstance(raw, str) else None):
+                content = build_section_md(slug, wiki_json)
+            else:
+                content = str(raw)
             content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             keep_slugs.add(slug)
             page = (
@@ -611,77 +750,5 @@ class WikiAgentService:
         return list(by_key.values())
 
     def _default_section(self, slug: str, wiki_json: Dict) -> str:
-        if slug == "overview":
-            o = wiki_json.get("overview") or {}
-            if not isinstance(o, dict):
-                return f"# Overview\n\n{o}\n"
-            return f"# Overview\n\n{o.get('description') or o.get('summary') or ''}\n"
-        if slug == "architecture":
-            diagrams = wiki_json.get("diagrams") if isinstance(wiki_json.get("diagrams"), dict) else {}
-            d = diagrams.get("high_level_mermaid")
-            if not d:
-                arch = wiki_json.get("architecture")
-                if isinstance(arch, str):
-                    d = arch
-                elif isinstance(arch, dict):
-                    d = arch.get("pattern") or arch.get("summary") or ""
-            return f"# Architecture\n\n```mermaid\n{d or 'graph TD\\n  A[App]'}\n```\n"
-        if slug == "business_logic":
-            bl = wiki_json.get("business_logic_layer") or {}
-            if not isinstance(bl, dict):
-                return f"# Business Logic Layer\n\n{bl}\n"
-            lines = [f"# Business Logic Layer\n\n{bl.get('summary') or bl.get('description') or ''}\n"]
-            for comp in bl.get("components") or []:
-                if isinstance(comp, str):
-                    lines.append(f"- {comp}\n")
-                    continue
-                if not isinstance(comp, dict):
-                    continue
-                lines.append(f"## {comp.get('name', 'Component')}\n")
-                if comp.get("purpose"):
-                    lines.append(f"**Purpose:** {comp['purpose']}\n")
-                for wf in comp.get("workflows") or []:
-                    if isinstance(wf, dict):
-                        steps = wf.get("steps") or []
-                        if isinstance(steps, list):
-                            step_text = " → ".join(str(s) for s in steps)
-                        else:
-                            step_text = str(steps)
-                        lines.append(f"- **{wf.get('operation', 'Workflow')}:** {step_text}\n")
-                    else:
-                        lines.append(f"- {wf}\n")
-                for rule in (comp.get("business_rules") or comp.get("rules") or []):
-                    text = rule.get("rule", rule) if isinstance(rule, dict) else rule
-                    lines.append(f"- {text}\n")
-            return "".join(lines) or "# Business Logic Layer\n\nNot detected.\n"
-        if slug == "api_surface":
-            items = wiki_json.get("api_surface") or []
-            if isinstance(items, dict):
-                endpoints = items.get("endpoints") or []
-                if isinstance(endpoints, list) and endpoints:
-                    lines = []
-                    for ep in endpoints:
-                        if isinstance(ep, dict):
-                            lines.append(
-                                f"- `{ep.get('method', '')} {ep.get('path') or ep.get('file', '')}`"
-                                f" {ep.get('description') or ''}".rstrip()
-                            )
-                        else:
-                            lines.append(f"- `{ep}`")
-                    return f"# API Surface\n\n" + "\n".join(lines) + "\n"
-                return f"# API Surface\n\n{json.dumps(items, indent=2)}\n"
-            lines = []
-            for i in items if isinstance(items, list) else []:
-                if isinstance(i, dict):
-                    lines.append(f"- `{i.get('file') or i.get('path') or ''}`")
-                else:
-                    lines.append(f"- `{i}`")
-            return f"# API Surface\n\n{chr(10).join(lines) or 'Not detected'}\n"
-        if slug == "build_deploy":
-            b = wiki_json.get("build_deploy") or wiki_json.get("deployment_info") or {}
-            if not isinstance(b, dict):
-                return f"# Build & Deploy\n\n{b}\n"
-            arts = "\n".join(f"- `{a}`" for a in (b.get("artifacts") or []) if a)
-            summary = b.get("summary") or b.get("hosting") or ""
-            return f"# Build & Deploy\n\n{summary}\n\n{arts}\n"
-        return f"# {slug}\n"
+        """Backward-compatible wrapper — prefer ``build_section_md``."""
+        return build_section_md(slug, wiki_json)

@@ -75,7 +75,7 @@ export default function TeamSaviConnectorsPage() {
   const params = useParams()
   const teamId = String(params.teamId || '')
   const router = useRouter()
-  const { hasPermission, hasRole } = useAuth()
+  const { hasPermission, hasRole, hasCapability } = useAuth()
 
   const [teamName, setTeamName] = useState('')
   const [savi, setSavi] = useState<SaviInstance | null>(null)
@@ -124,9 +124,10 @@ export default function TeamSaviConnectorsPage() {
   })
 
   const canManage =
-    hasPermission('can_manage_teams') ||
-    hasPermission('can_manage_tenant_config') ||
-    hasRole('admin')
+    hasCapability('teams') &&
+    (hasPermission('can_manage_teams') ||
+      hasPermission('can_manage_tenant_config') ||
+      hasRole('admin'))
 
   const load = useCallback(async () => {
     const teamRes = await apiClient.get(`/api/v1/teams/${teamId}`)

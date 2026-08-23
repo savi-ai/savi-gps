@@ -7,9 +7,10 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.core.database import AuditTrail, IndexRun, Repository, WikiClaim, WikiPage
+from app.core.database import AuditTrail, IndexRun, Repository, RepositoryWikiSite, WikiClaim, WikiPage
 from app.core.logger import logger
 from app.services.intelligence.citation_verifier import CitationVerifier
+from app.services.intelligence.wiki_sections import build_section_md, is_section_thin
 
 
 class WikiGovernanceService:
@@ -29,11 +30,50 @@ class WikiGovernanceService:
         )
         if not page:
             return None
+        # A: repair thin review pages from stored Full Wiki JSON without re-index
+        self._enrich_thin_page_from_site(page)
         repository = (
             self.db.query(Repository).filter(Repository.id == repository_id).first()
         )
         self.refresh_drift_status(page, repository)
         return self._page_dict(page)
+
+    def _enrich_thin_page_from_site(self, page: WikiPage) -> bool:
+        """Replace stub section markdown using RepositoryWikiSite.summary_json when richer."""
+        if not is_section_thin(page.content_md or ""):
+            return False
+        site = (
+            self.db.query(RepositoryWikiSite)
+            .filter(RepositoryWikiSite.repository_id == page.repository_id)
+            .first()
+        )
+        wiki_json = site.summary_json if site and isinstance(site.summary_json, dict) else None
+        if not wiki_json:
+            return False
+        enriched = build_section_md(page.slug, wiki_json)
+        if is_section_thin(enriched) or enriched.strip() == (page.content_md or "").strip():
+            return False
+        import hashlib
+
+        page.content_md = enriched
+        page.content_hash = hashlib.sha256(enriched.encode("utf-8")).hexdigest()
+        page.version = (page.version or 1) + 1
+        page.freshness_at = datetime.now()
+        if page.state != "live":
+            page.drift_status = "pending_review"
+            page.state = "draft"
+        try:
+            self.verifier.verify_page(page)
+        except Exception as e:
+            logger.warning("Citation re-verify after section enrich failed: %s", e)
+        self.db.commit()
+        logger.info(
+            "Enriched thin wiki page %s/%s from site summary_json (%s chars)",
+            page.repository_id,
+            page.slug,
+            len(enriched),
+        )
+        return True
 
     def list_claims(self, page_id: str) -> List[Dict[str, Any]]:
         claims = (

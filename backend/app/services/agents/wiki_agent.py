@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.logger import logger
+from app.core.pipeline_log import log_pipeline
 from app.core.secret_redaction import redact_secrets
 from app.services.agents.base_agent import BaseAgent
 from app.services.intelligence.analysis_storage import (
@@ -26,6 +27,7 @@ from app.services.intelligence.code_chunker import FileChunk
 from app.services.intelligence.mermaid_sanitize import sanitize_wiki_json_mermaid
 from app.services.intelligence.wiki_html_builder import build_wiki_html
 from app.services.intelligence.wiki_generation_settings import resolve_wiki_generation_settings
+from app.services.intelligence.wiki_sections import ensure_repo_sections_md
 
 DEEP_WIKI_PROMPT_PATH = (
     Path(__file__).resolve().parents[2] / "prompts" / "wiki_deep_analysis.txt"
@@ -83,6 +85,7 @@ def _compile_wiki_md(wiki_json: Dict[str, Any], repo_name: str) -> str:
     sections = wiki_json.get("sections_md") or {}
     order = (
         "overview",
+        "functionality",
         "components",
         "integration",
         "dependencies",
@@ -93,30 +96,264 @@ def _compile_wiki_md(wiki_json: Dict[str, Any], repo_name: str) -> str:
         "data_flow",
         "e2e_flow",
         "database",
+        "tech_stack",
         "build_deploy",
     )
     parts: List[str] = []
     for key in order:
         content = sections.get(key)
-        if content and content.strip():
-            parts.append(content.strip())
+        if content and str(content).strip():
+            parts.append(str(content).strip())
 
-    if not parts:
-        bl = wiki_json.get("business_logic_layer") or {}
-        overview = wiki_json.get("overview", {})
-        title = wiki_json.get("application_name") or repo_name
-        parts.append(f"# {title}\n\n{overview.get('description', '')}")
-        if bl.get("summary"):
-            parts.append(f"# Components\n\n{bl['summary']}")
-        for comp in bl.get("components") or []:
-            parts.append(f"## {comp.get('name', 'Component')}\n\n{comp.get('purpose', '')}")
-        integration = wiki_json.get("integration") or {}
-        if isinstance(integration, dict) and integration.get("summary"):
-            parts.append(f"# Integration\n\n{integration['summary']}")
-        elif isinstance(integration, str) and integration.strip():
-            parts.append(f"# Integration\n\n{integration}")
+    if parts:
+        return "\n\n".join(parts)
+
+    title = wiki_json.get("application_name") or wiki_json.get("repo_name") or repo_name
+    overview = wiki_json.get("overview") if isinstance(wiki_json.get("overview"), dict) else {}
+    parts.append(f"# {title}\n\n{overview.get('description') or overview.get('summary') or ''}")
+    if overview.get("purpose"):
+        parts.append(f"**Purpose:** {overview['purpose']}")
+
+    functionality = wiki_json.get("functionality") if isinstance(wiki_json.get("functionality"), dict) else {}
+    if functionality.get("summary") or functionality.get("bullets"):
+        bullets = "\n".join(f"- {b}" for b in (functionality.get("bullets") or []))
+        parts.append(
+            f"# Functionality\n\n{functionality.get('summary') or ''}\n\n{bullets}".rstrip()
+        )
+
+    components = wiki_json.get("components") or []
+    bl = wiki_json.get("business_logic_layer") if isinstance(wiki_json.get("business_logic_layer"), dict) else {}
+    if components or bl.get("components"):
+        parts.append(f"# Components\n\n{bl.get('summary') or ''}".rstrip())
+        for comp in components or bl.get("components") or []:
+            if not isinstance(comp, dict):
+                continue
+            name = comp.get("name") or comp.get("repository_slug") or "Component"
+            role = comp.get("role") or ""
+            header = f"## {name}" + (f" ({role})" if role else "")
+            body = [comp.get("purpose") or ""]
+            tech = comp.get("tech_stack")
+            if isinstance(tech, list) and tech:
+                body.append("**Tech:** " + ", ".join(str(t) for t in tech))
+            elif isinstance(tech, str) and tech:
+                body.append(f"**Tech:** {tech}")
+            apis = comp.get("key_apis") or comp.get("apis") or []
+            if apis:
+                body.append("**Key APIs:**")
+                for api in apis[:20]:
+                    if isinstance(api, dict):
+                        body.append(
+                            f"- `{api.get('method', '')} {api.get('path') or api.get('file', '')}` "
+                            f"{api.get('description') or ''}".rstrip()
+                        )
+                    else:
+                        body.append(f"- `{api}`")
+            for wf in comp.get("workflows") or []:
+                if isinstance(wf, dict):
+                    steps = wf.get("steps") or []
+                    step_text = " → ".join(str(s) for s in steps) if isinstance(steps, list) else str(steps)
+                    body.append(f"- **{wf.get('operation', 'Workflow')}:** {step_text}")
+                else:
+                    body.append(f"- {wf}")
+            parts.append(header + "\n\n" + "\n".join(b for b in body if b))
+
+    integration = wiki_json.get("integration") or {}
+    if isinstance(integration, dict) and (integration.get("summary") or integration.get("contracts")):
+        parts.append(f"# Integration\n\n{integration.get('summary') or ''}")
+        contracts = integration.get("contracts")
+        if isinstance(contracts, list):
+            for c in contracts:
+                parts.append(f"- {c}" if not isinstance(c, dict) else f"- {c.get('summary') or c}")
+        elif isinstance(contracts, str):
+            parts.append(contracts)
+    elif isinstance(integration, str) and integration.strip():
+        parts.append(f"# Integration\n\n{integration}")
+
+    deps = wiki_json.get("dependencies") or []
+    if deps:
+        lines = ["# Dependencies\n"]
+        for d in deps:
+            if isinstance(d, dict):
+                lines.append(
+                    f"- `{d.get('from', '?')}` → `{d.get('to', '?')}` "
+                    f"({d.get('type') or 'depends'}) {d.get('evidence') or ''}".rstrip()
+                )
+            else:
+                lines.append(f"- {d}")
+        parts.append("\n".join(lines))
+
+    diagrams = wiki_json.get("diagrams") if isinstance(wiki_json.get("diagrams"), dict) else {}
+    for label, key in (
+        ("Service Map", "service_map_mermaid"),
+        ("High-Level Architecture", "high_level_mermaid"),
+        ("Data Flow", "data_flow_mermaid"),
+        ("E2E Flow", "e2e_flow_mermaid"),
+    ):
+        mermaid = diagrams.get(key)
+        if mermaid:
+            parts.append(f"# {label}\n\n```mermaid\n{mermaid}\n```")
+
+    build = wiki_json.get("build_deploy") if isinstance(wiki_json.get("build_deploy"), dict) else {}
+    if build.get("summary") or build.get("artifacts"):
+        arts = "\n".join(f"- `{a}`" for a in (build.get("artifacts") or []))
+        parts.append(f"# Build & Deploy\n\n{build.get('summary') or ''}\n\n{arts}".rstrip())
 
     return "\n\n".join(parts) if parts else f"# {repo_name}\n\nWiki content pending deep analysis.\n"
+
+
+def _enrich_application_wiki_json(
+    wiki_json: Dict[str, Any],
+    *,
+    app_name: str,
+    member_count: int,
+    service_map_mermaid: str = "",
+) -> Dict[str, Any]:
+    """Normalize LLM app-wiki JSON so ``build_wiki_html`` / markdown fill richly."""
+    wiki_json = dict(wiki_json or {})
+    wiki_json.setdefault("application_name", app_name)
+    wiki_json.setdefault("repo_name", app_name)
+
+    overview = wiki_json.get("overview")
+    if not isinstance(overview, dict):
+        overview = {"description": str(overview or "")}
+        wiki_json["overview"] = overview
+    overview.setdefault("file_count", member_count)
+
+    components = [c for c in (wiki_json.get("components") or []) if isinstance(c, dict)]
+
+    # Functionality bullets from component purposes when missing
+    functionality = wiki_json.get("functionality")
+    if not isinstance(functionality, dict):
+        functionality = {}
+        wiki_json["functionality"] = functionality
+    if not functionality.get("bullets") and components:
+        functionality["bullets"] = [
+            c.get("purpose") or c.get("name") or "Component"
+            for c in components
+            if c.get("purpose") or c.get("name")
+        ][:12]
+    if not functionality.get("summary") and overview.get("purpose"):
+        functionality["summary"] = overview["purpose"]
+
+    # Map components → business_logic_layer for the shared HTML template
+    if components and not wiki_json.get("business_logic_layer"):
+        wiki_json["business_logic_layer"] = {
+            "summary": f"{len(components)} application components across member repositories",
+            "components": [
+                {
+                    "name": c.get("name") or c.get("repository_slug") or "Component",
+                    "purpose": c.get("purpose") or c.get("role") or "",
+                    "source_files": c.get("source_files")
+                    or (
+                        [f"repos/{c['repository_slug']}"]
+                        if c.get("repository_slug")
+                        else []
+                    ),
+                    "workflows": c.get("workflows") or [],
+                    "business_rules": c.get("business_rules") or c.get("rules") or [],
+                }
+                for c in components
+            ],
+        }
+
+    # Flatten tech_stack for template table rows
+    tech = wiki_json.get("tech_stack")
+    if isinstance(tech, list) and tech and isinstance(tech[0], str):
+        wiki_json["tech_stack"] = [{"layer": "Shared", "technologies": tech, "evidence_file": ""}]
+    elif not tech and components:
+        rows = []
+        for c in components:
+            t = c.get("tech_stack")
+            if isinstance(t, list) and t:
+                rows.append({
+                    "layer": c.get("name") or c.get("role") or "Component",
+                    "technologies": [str(x) for x in t],
+                    "evidence_file": f"repos/{c.get('repository_slug') or ''}",
+                })
+            elif isinstance(t, str) and t:
+                rows.append({
+                    "layer": c.get("name") or c.get("role") or "Component",
+                    "technologies": [t],
+                    "evidence_file": f"repos/{c.get('repository_slug') or ''}",
+                })
+        if rows:
+            wiki_json["tech_stack"] = rows
+
+    # API surface from component key_apis
+    if not wiki_json.get("api_surface"):
+        apis: List[Dict[str, Any]] = []
+        for c in components:
+            for api in c.get("key_apis") or c.get("apis") or []:
+                if isinstance(api, dict):
+                    apis.append({
+                        "method": api.get("method") or "",
+                        "path": api.get("path") or "",
+                        "file": api.get("file")
+                        or f"repos/{c.get('repository_slug') or ''}",
+                        "description": api.get("description") or c.get("name") or "",
+                    })
+                elif api:
+                    apis.append({
+                        "file": f"repos/{c.get('repository_slug') or ''}",
+                        "path": str(api),
+                        "description": c.get("name") or "",
+                    })
+        if apis:
+            wiki_json["api_surface"] = apis
+
+    diagrams = wiki_json.get("diagrams")
+    if not isinstance(diagrams, dict):
+        diagrams = {}
+        wiki_json["diagrams"] = diagrams
+    if service_map_mermaid and not diagrams.get("high_level_mermaid"):
+        diagrams["high_level_mermaid"] = service_map_mermaid
+    if diagrams.get("service_map_mermaid") and not diagrams.get("high_level_mermaid"):
+        diagrams["high_level_mermaid"] = diagrams["service_map_mermaid"]
+    if diagrams.get("data_flow_mermaid") and not diagrams.get("request_flow_mermaid"):
+        diagrams["request_flow_mermaid"] = diagrams["data_flow_mermaid"]
+    if diagrams.get("e2e_flow_mermaid") and not diagrams.get("request_flow_mermaid"):
+        diagrams.setdefault("request_flow_mermaid", diagrams["e2e_flow_mermaid"])
+
+    # Ensure sections_md has deep prose when LLM omitted it
+    sections = wiki_json.get("sections_md")
+    if not isinstance(sections, dict):
+        sections = {}
+    if not any(str(sections.get(k) or "").strip() for k in ("overview", "components", "integration")):
+        compiled = _compile_wiki_md({**wiki_json, "sections_md": {}}, app_name)
+        # Split compiled markdown into rough sections by H1
+        current = "overview"
+        bucket: Dict[str, List[str]] = {current: []}
+        for line in compiled.splitlines():
+            if line.startswith("# ") and not line.startswith("## "):
+                title = line[2:].strip().lower()
+                if "function" in title:
+                    current = "functionality"
+                elif "component" in title:
+                    current = "components"
+                elif "integrat" in title:
+                    current = "integration"
+                elif "depend" in title:
+                    current = "dependencies"
+                elif "service" in title or "architecture" in title:
+                    current = "service_map"
+                elif "data" in title:
+                    current = "data_flow"
+                elif "build" in title or "deploy" in title:
+                    current = "build_deploy"
+                elif "tech" in title:
+                    current = "tech_stack"
+                else:
+                    current = "overview"
+                bucket.setdefault(current, [])
+                bucket[current].append(line)
+            else:
+                bucket.setdefault(current, []).append(line)
+        for key, lines in bucket.items():
+            text = "\n".join(lines).strip()
+            if text:
+                sections[key] = text
+    wiki_json["sections_md"] = sections
+    return wiki_json
 
 
 class WikiAgent(BaseAgent):
@@ -154,6 +391,8 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         repo_full_name = repository.get("github_full_name") or repository.get("url", "")
         default_branch = repository.get("default_branch", "main")
         org_name = repository.get("github_org") or repository.get("github_owner") or "unknown-org"
+        index_run_id = state.get("index_run_id")
+        tenant_id = state.get("tenant_id")
 
         gen_settings = state.get("wiki_generation_settings") or resolve_wiki_generation_settings()
         generation_mode = gen_settings.get("wiki_generation_mode") or "auto"
@@ -192,6 +431,19 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
         allow_api = generation_mode in ("api", "auto") and not uses_copilot_cli
         allow_fallback = generation_mode != "cli" and not uses_copilot_cli
 
+        log_pipeline(
+            stage="wiki_mode",
+            status="info",
+            message=(
+                f"mode={generation_mode} cli={allow_cli} api={allow_api} "
+                f"agent_cli={agent_cli} provider={llm_provider}"
+            ),
+            repository_id=repository_id,
+            repository_name=repo_full_name or repo_name,
+            index_run_id=index_run_id,
+            tenant_id=tenant_id,
+        )
+
         # Incremental updates use the API path (patch prior wiki from git diffs).
         # CLI shell scripts always regenerate fully.
         if (
@@ -227,6 +479,16 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
 
         if not wiki_json and allow_cli:
             shell_invoked = True
+            log_pipeline(
+                stage="wiki_cli",
+                status="start",
+                message=f"Invoking {agent_cli} CLI via wiki_agent.sh",
+                repository_id=repository_id,
+                repository_name=repo_full_name or repo_name,
+                index_run_id=index_run_id,
+                tenant_id=tenant_id,
+                extra={"agent_cli": agent_cli},
+            )
             shell_result = await self._run_shell_agent(
                 org_name=org_name,
                 repo_slug=repo_name,
@@ -234,9 +496,21 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 output_dir=output_dir,
                 attribute_definitions=attribute_definitions,
                 agent_cli=agent_cli,
+                repository_id=repository_id,
+                index_run_id=index_run_id,
             )
             if shell_result and shell_result.get("wiki_json"):
                 shell_succeeded = True
+                log_pipeline(
+                    stage="wiki_cli",
+                    status="ok",
+                    message="CLI wiki generation succeeded",
+                    repository_id=repository_id,
+                    repository_name=repo_full_name or repo_name,
+                    index_run_id=index_run_id,
+                    tenant_id=tenant_id,
+                    extra={"partial": bool(shell_result.get("recovered_partial"))},
+                )
                 if shell_result.get("recovered_partial"):
                     generation_source = f"wiki_agent_shell_partial:{agent_cli}"
                 else:
@@ -318,6 +592,7 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             generation_source = "wiki_agent_fallback"
 
         wiki_json = sanitize_wiki_json_mermaid(wiki_json)
+        ensure_repo_sections_md(wiki_json)
 
         if not wiki_html:
             wiki_html = build_wiki_html(
@@ -455,34 +730,12 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
             generation_source = "wiki_agent_application_fallback"
 
         wiki_json = sanitize_wiki_json_mermaid(wiki_json)
-        wiki_json.setdefault("application_name", app_name)
-        wiki_json.setdefault("repo_name", app_name)
-
-        # Map service_map_mermaid into diagrams for HTML builder compatibility
-        diagrams = wiki_json.setdefault("diagrams", {})
-        if service_map_mermaid and not diagrams.get("high_level_mermaid"):
-            diagrams["high_level_mermaid"] = service_map_mermaid
-        if diagrams.get("service_map_mermaid") and not diagrams.get("high_level_mermaid"):
-            diagrams["high_level_mermaid"] = diagrams["service_map_mermaid"]
-
-        # Surface components as business_logic_layer for HTML builder
-        if wiki_json.get("components") and not wiki_json.get("business_logic_layer"):
-            comps = wiki_json["components"]
-            if isinstance(comps, list):
-                wiki_json["business_logic_layer"] = {
-                    "summary": f"{len(comps)} application components",
-                    "components": [
-                        {
-                            "name": c.get("name") or c.get("repository_name") or "Component",
-                            "purpose": c.get("purpose") or c.get("role") or "",
-                            "source_files": c.get("source_files") or [],
-                            "workflows": c.get("workflows") or [],
-                            "business_rules": c.get("business_rules") or [],
-                        }
-                        for c in comps
-                        if isinstance(c, dict)
-                    ],
-                }
+        wiki_json = _enrich_application_wiki_json(
+            wiki_json,
+            app_name=app_name,
+            member_count=len((manifest.get("members") or [])),
+            service_map_mermaid=service_map_mermaid or "",
+        )
 
         if not wiki_html:
             wiki_html = build_wiki_html(
@@ -491,7 +744,7 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 repo_full_name=application.get("description") or app_name,
                 default_branch="application",
                 index_run_id=None,
-                loc=0,
+                loc=int((wiki_json.get("overview") or {}).get("loc") or 0),
                 file_count=len((manifest.get("members") or [])),
             )
 
@@ -624,7 +877,7 @@ Do not hallucinate — omit or mark "Not detected" when evidence is missing."""
                 f"{m.get('snippets') or '(no snippets)'}\n"
             )
 
-        prompt = f"""Analyze this multi-repository application workspace and return wiki JSON.
+        prompt = f"""Analyze this multi-repository application workspace and return Deep Wiki JSON.
 
 {app_rules}
 
@@ -633,31 +886,96 @@ Description: {application.get('description') or 'n/a'}
 Domain: {application.get('domain') or 'n/a'}
 
 MANIFEST.json:
-{json.dumps(manifest, indent=2)[:8000]}
+{json.dumps(manifest, indent=2)[:12000]}
 
 Existing service-map Mermaid (refine if needed; do not invent edges):
 {service_map_mermaid or '(none)'}
 
 Workspace member sources:
-{''.join(member_summaries)[:50000]}
+{''.join(member_summaries)[:80000]}
 
-Return compact JSON only (no markdown fences) with keys:
-application_name, overview (description, purpose),
-components (list of {{name, repository_slug, role, purpose, tech_stack, key_apis}}),
-integration (summary, contracts),
-dependencies (list of {{from, to, type, evidence}}),
-diagrams (high_level_mermaid, service_map_mermaid, data_flow_mermaid, e2e_flow_mermaid),
-sections_md (overview, components, integration, dependencies, service_map, data_flow, build_deploy),
-tech_stack, build_deploy, data_flow.
-Keep strings under 500 characters where possible. Cite paths under repos/<slug>/.
+Return STRICT JSON only (no markdown fences) with this shape — be DETAILED, not brief:
+{{
+  "application_name": "string",
+  "overview": {{
+    "description": "2-4 paragraph product overview",
+    "purpose": "string",
+    "loc": 0,
+    "file_count": 0
+  }},
+  "functionality": {{
+    "summary": "string",
+    "bullets": ["capability with evidence path", "..."]
+  }},
+  "components": [{{
+    "name": "string",
+    "repository_slug": "string",
+    "role": "backend|frontend|...",
+    "purpose": "detailed purpose",
+    "tech_stack": ["Next.js", "..."],
+    "source_files": ["repos/<slug>/..."],
+    "key_apis": [{{"method": "GET", "path": "/api/...", "description": "..."}}],
+    "workflows": [{{"operation": "Login", "steps": ["step1", "step2"]}}],
+    "business_rules": [{{"rule": "...", "evidence_file": "repos/<slug>/..."}}]
+  }}],
+  "integration": {{
+    "summary": "how repos talk — protocols, auth, shared data",
+    "contracts": ["REST /api/...", "..."]
+  }},
+  "dependencies": [{{"from": "slug", "to": "slug", "type": "http|library|db|event", "evidence": "repos/..."}}],
+  "business_logic_layer": {{
+    "summary": "cross-cutting domain logic",
+    "components": [{{
+      "name": "string",
+      "purpose": "string",
+      "source_files": ["repos/..."],
+      "workflows": [{{"operation": "string", "steps": ["string"]}}],
+      "business_rules": [{{"rule": "string", "evidence_file": "repos/..."}}]
+    }}]
+  }},
+  "tech_stack": [{{"layer": "Frontend|Backend|Data|Infra", "technologies": ["..."], "evidence_file": "repos/..."}}],
+  "api_surface": [{{"method": "GET", "path": "/...", "file": "repos/...", "description": "..."}}],
+  "diagrams": {{
+    "high_level_mermaid": "graph TD ...",
+    "service_map_mermaid": "graph TD ...",
+    "low_level_mermaid": "graph TD ...",
+    "data_flow_mermaid": "flowchart LR ...",
+    "e2e_flow_mermaid": "sequenceDiagram ...",
+    "request_flow_mermaid": "flowchart LR ...",
+    "deployment_flow_mermaid": "flowchart TD ..."
+  }},
+  "data_flow": {{"summary": "string", "diagram_mermaid": "string"}},
+  "build_deploy": {{"summary": "string", "artifacts": ["string"]}},
+  "run_locally": {{
+    "intro": "string",
+    "prerequisites": ["string"],
+    "commands": "multi-line setup commands"
+  }},
+  "sections_md": {{
+    "overview": "# Overview\\n\\nlong markdown...",
+    "functionality": "# Functionality\\n\\n...",
+    "components": "# Components\\n\\n## repo-a\\n\\n...",
+    "integration": "# Integration\\n\\n...",
+    "dependencies": "# Dependencies\\n\\n...",
+    "service_map": "# Service Map\\n\\n```mermaid\\n...\\n```",
+    "data_flow": "# Data Flow\\n\\n...",
+    "build_deploy": "# Build & Deploy\\n\\n..."
+  }}
+}}
+
+Requirements:
+- sections_md values must be substantial (multiple paragraphs / lists per section).
+- Every component needs workflows or key_apis with workspace-relative citations.
+- Prefer depth over brevity. Do not collapse the whole application into three short paragraphs.
 """
         response = await llm.generate(
             prompt=prompt,
             system_prompt=(
                 self.SYSTEM_PROMPT
                 + "\nYou are documenting an APPLICATION spanning multiple repositories."
+                + " Match single-repo Deep Wiki depth. Never return a stub summary."
             ),
-            max_tokens=8192,
+            max_tokens=16000,
             temperature=0.2,
         )
         try:
@@ -734,6 +1052,8 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
         output_dir: Path,
         attribute_definitions: List[Dict],
         agent_cli: str = "claude",
+        repository_id: Optional[str] = None,
+        index_run_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Invoke wiki_agent.sh off the asyncio event loop.
@@ -820,6 +1140,8 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
             pid_file = output_dir / "WIKI_CLI_PID"
 
             def _run_wiki_cli():
+                import time
+
                 proc = subprocess.Popen(
                     argv,
                     stdout=subprocess.PIPE,
@@ -833,25 +1155,48 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
                     pid_file.write_text(str(proc.pid), encoding="utf-8")
                 except OSError:
                     pass
+                heartbeat_s = 30
+                start = time.monotonic()
                 try:
-                    stdout, stderr = proc.communicate(timeout=timeout_s)
+                    while proc.poll() is None:
+                        elapsed = int(time.monotonic() - start)
+                        if elapsed >= timeout_s:
+                            logger.warning(
+                                "Wiki CLI timeout — killing process group pgid=%s (AGENT_CLI=%s)",
+                                proc.pid,
+                                agent_cli,
+                            )
+                            self._kill_process_group(proc.pid)
+                            try:
+                                stdout, stderr = proc.communicate(timeout=15)
+                            except Exception:
+                                stdout, stderr = "", ""
+                            raise subprocess.TimeoutExpired(
+                                argv, timeout_s, output=stdout, stderr=stderr
+                            )
+                        time.sleep(min(heartbeat_s, max(1, timeout_s - elapsed)))
+                        if proc.poll() is None:
+                            elapsed = int(time.monotonic() - start)
+                            log_pipeline(
+                                stage="wiki_cli",
+                                status="heartbeat",
+                                message=f"CLI still running ({elapsed}s / {timeout_s}s)",
+                                repository_id=repository_id,
+                                repository_name=repo_slug,
+                                index_run_id=index_run_id,
+                                extra={
+                                    "agent_cli": agent_cli,
+                                    "pid": proc.pid,
+                                    "elapsed_s": elapsed,
+                                    "timeout_s": timeout_s,
+                                },
+                            )
+                    stdout, stderr = proc.communicate()
                     return subprocess.CompletedProcess(
                         argv, proc.returncode, stdout, stderr
                     )
                 except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "Wiki CLI timeout — killing process group pgid=%s (AGENT_CLI=%s)",
-                        proc.pid,
-                        agent_cli,
-                    )
-                    self._kill_process_group(proc.pid)
-                    try:
-                        stdout, stderr = proc.communicate(timeout=15)
-                    except Exception:
-                        stdout, stderr = "", ""
-                    raise subprocess.TimeoutExpired(
-                        argv, timeout_s, output=stdout, stderr=stderr
-                    )
+                    raise
                 finally:
                     try:
                         pid_file.unlink(missing_ok=True)
@@ -972,6 +1317,7 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
         repo_slug: str = "repository",
     ) -> Dict[str, Any]:
         """Build HTML/MD from structured JSON when CLI only wrote wiki_result.json."""
+        ensure_repo_sections_md(wiki_json)
         repo_name = wiki_json.get("repo_name") or repo_slug
         overview = wiki_json.get("overview") or {}
         wiki_html = build_wiki_html(
@@ -1023,7 +1369,7 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
             "wiki_md": wiki_md,
         }
 
-    def _implementation_snippets(self, chunks: List[FileChunk], max_chars: int = 14000) -> str:
+    def _implementation_snippets(self, chunks: List[FileChunk], max_chars: int = 22000) -> str:
         relevant: List[FileChunk] = []
         for chunk in chunks:
             path_lower = chunk.file_path.lower()
@@ -1038,8 +1384,8 @@ Keep strings under 500 characters where possible. Cite paths under repos/<slug>/
 
         lines: List[str] = []
         total = 0
-        for chunk in relevant[:25]:
-            snippet = chunk.content[:800] if chunk.content else ""
+        for chunk in relevant[:40]:
+            snippet = chunk.content[:1200] if chunk.content else ""
             block = f"### {chunk.file_path}\n{snippet}\n"
             if total + len(block) > max_chars:
                 break
@@ -1175,9 +1521,12 @@ Implementation file snippets (analyze these for business_logic_layer):
 Attribute definitions to extract:
 {json.dumps(attr_keys, indent=2)}
 
-Return compact JSON only (no markdown fences, no sections_md — HTML is built from structured fields).
-Keep business_logic_layer.components to the top 8 core components.
-Keep each string value under 400 characters. Escape quotes properly in JSON.
+Return STRICT JSON only (no markdown fences). Prefer depth for architecture and business_logic_layer.
+Omit sections_md (HTML and review pages are built from structured fields + post-processing).
+Keep business_logic_layer.components to the top 10 core components with workflows and source_files.
+Allow longer string values (up to ~1200 characters) for overview.description, architecture summaries,
+and business_logic_layer.summary — do not collapse into one-liners.
+Escape quotes properly in JSON.
 
 Return JSON with keys:
 repo_name, overview, functionality, tech_stack,
@@ -1190,7 +1539,7 @@ api_surface, data_flow, database, build_deploy, run_locally, observability.
         response = await llm.generate(
             prompt=prompt,
             system_prompt=self.SYSTEM_PROMPT,
-            max_tokens=8192,
+            max_tokens=12000,
             temperature=0.2,
         )
         try:

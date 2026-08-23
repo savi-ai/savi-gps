@@ -351,7 +351,7 @@ class TenantConfig(Base):
     id = Column(String, primary_key=True)
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, unique=True, index=True)
     capabilities = Column(JSON, nullable=False)
-    onboarding_path = Column(String, nullable=True)  # wiki_only, modernization, full
+    onboarding_path = Column(String, nullable=True)  # wiki_only, alpha, modernization, full
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -439,7 +439,7 @@ class ApplicationRepository(Base):
     id = Column(String, primary_key=True)
     application_id = Column(String, ForeignKey("applications.id"), nullable=False, index=True)
     repository_id = Column(String, ForeignKey("repositories.id"), nullable=False, unique=True, index=True)
-    role = Column(String, nullable=True)  # backend | frontend | api | worker | infra | library | other
+    role = Column(String, nullable=True)  # unknown | backend | frontend | api | worker | infra | library | other
     created_at = Column(DateTime, default=datetime.now)
 
     application = relationship("Application", back_populates="repository_memberships")
@@ -838,6 +838,11 @@ class AnalysisAttributeDefinition(Base):
     extraction_hint = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, index=True)
     is_searchable = Column(Boolean, default=True, index=True)
+    # Modernization assessment — when true, scorer emits a signal from extracted value
+    use_in_assessment = Column(Boolean, default=False, index=True)
+    assessment_weight = Column(Integer, nullable=False, default=1)  # relative weight 1–5
+    assessment_rules = Column(JSON, nullable=True)  # scoring / recommendation hints
+    recommendation_template = Column(Text, nullable=True)  # used when signal is warn/bad
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -1485,6 +1490,30 @@ def init_db():
                         ))
                         conn.commit()
                         logger.info("Added content_hash column to wiki_pages table")
+
+                if inspector.has_table("analysis_attribute_definitions"):
+                    result = conn.execute(
+                        text("PRAGMA table_info(analysis_attribute_definitions)")
+                    )
+                    attr_def_cols = [row[1] for row in result]
+                    for col_name, col_type in {
+                        "use_in_assessment": "BOOLEAN DEFAULT 0",
+                        "assessment_weight": "INTEGER DEFAULT 1",
+                        "assessment_rules": "JSON",
+                        "recommendation_template": "TEXT",
+                    }.items():
+                        if col_name not in attr_def_cols:
+                            conn.execute(
+                                text(
+                                    f"ALTER TABLE analysis_attribute_definitions "
+                                    f"ADD COLUMN {col_name} {col_type}"
+                                )
+                            )
+                            conn.commit()
+                            logger.info(
+                                "Added %s to analysis_attribute_definitions",
+                                col_name,
+                            )
 
                 if inspector.has_table("savi_instances"):
                     result = conn.execute(text("PRAGMA table_info(savi_instances)"))

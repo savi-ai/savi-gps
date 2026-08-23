@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProjects } from '@/hooks/queries/useProjects'
@@ -41,12 +41,20 @@ function getStepProgress(step: string): number {
 
 export default function ProjectsPage() {
   const router = useRouter()
-  const { hasPermission } = useAuth()
+  const { hasPermission, hasCapability } = useAuth()
   const [pillarFilter, setPillarFilter] = useState<'all' | 'build' | 'modernize'>('all')
   const { data: projects = [], isLoading: loading, error: queryError } = useProjects(
     pillarFilter === 'all' ? undefined : pillarFilter
   )
   const error = queryError ? (queryError as Error).message : null
+
+  useEffect(() => {
+    if (!hasCapability('build')) {
+      router.push('/dashboard')
+    }
+  }, [hasCapability, router])
+
+  if (!hasCapability('build')) return null
 
   return (
     <div className="space-y-6">

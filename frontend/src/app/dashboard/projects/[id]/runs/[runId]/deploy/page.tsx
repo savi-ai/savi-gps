@@ -43,11 +43,17 @@ export default function DeploymentViewPage() {
   const params = useParams()
   const projectId = params.id as string
   const runId = params.runId as string
-  const { token } = useAuth()
+  const { token, hasCapability } = useAuth()
 
   const [deployment, setDeployment] = useState<DeploymentData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!hasCapability('build')) {
+      router.push('/dashboard')
+    }
+  }, [hasCapability, router])
 
   const fetchDeployment = useCallback(async () => {
     try {
@@ -78,6 +84,10 @@ export default function DeploymentViewPage() {
   }, [token, deployment, fetchDeployment])
 
   const statusInfo = deployment ? STATUS_CONFIG[deployment.status] || { label: deployment.status, color: 'gray', icon: '?' } : null
+
+  if (!hasCapability('build')) {
+    return null
+  }
 
   if (loading) {
     return (

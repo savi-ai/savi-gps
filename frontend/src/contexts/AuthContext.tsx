@@ -23,6 +23,7 @@ export interface TenantCapabilities {
   fleet: boolean
   modernize: boolean
   portfolio: boolean
+  teams: boolean
 }
 
 export interface SpecLayerSettings {
@@ -61,11 +62,12 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 const DEFAULT_CAPABILITIES: TenantCapabilities = {
-  build: true,
+  build: false,
   intelligence: false,
   fleet: false,
   modernize: false,
   portfolio: false,
+  teams: false,
 }
 
 function mergeTenantCapabilities(

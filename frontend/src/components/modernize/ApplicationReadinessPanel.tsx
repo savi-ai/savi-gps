@@ -9,6 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertTriangle, CheckCircle2, Loader2, Play, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import AgentEffortCard, {
+  type AgentEffort,
+  type AssessmentSynthesis,
+} from '@/components/modernize/AgentEffortCard'
 
 interface ReadinessSignal {
   id: string
@@ -46,6 +50,8 @@ interface ApplicationReadiness {
   repositories: RepoReadiness[]
   policy_gaps?: Array<{ message: string; policy_name: string; signal_id: string }>
   policies_applied?: Array<{ policy_name: string; version_number: string }>
+  synthesis?: AssessmentSynthesis
+  agent_effort?: AgentEffort
 }
 
 const LEVEL_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -165,6 +171,9 @@ export default function ApplicationReadinessPanel({
                 Reload stored
               </Button>
             </div>
+          )}
+          {assessed && (data.synthesis || data.agent_effort) && (
+            <AgentEffortCard synthesis={data.synthesis} effort={data.agent_effort} />
           )}
         </CardContent>
       </Card>

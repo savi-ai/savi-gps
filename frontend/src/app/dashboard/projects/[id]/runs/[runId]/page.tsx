@@ -233,12 +233,18 @@ export default function WorkflowTimelinePage() {
   const params = useParams()
   const projectId = params.id as string
   const runId = params.runId as string
-  const { token, user } = useAuth()
+  const { token, user, hasCapability } = useAuth()
 
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedStage, setExpandedStage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!hasCapability('build')) {
+      router.push('/dashboard')
+    }
+  }, [hasCapability, router])
 
   const fetchRun = useCallback(async () => {
     try {
@@ -279,6 +285,10 @@ export default function WorkflowTimelinePage() {
     if (stageData?.status === 'completed' || stageData?.status === 'failed') {
       setExpandedStage(expandedStage === stageKey ? null : stageKey)
     }
+  }
+
+  if (!hasCapability('build')) {
+    return null
   }
 
   if (loading) {

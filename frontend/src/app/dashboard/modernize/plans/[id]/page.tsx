@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, ExternalLink, Loader2, Rocket, Save } from 'lucide-react'
 import ReadinessPanel, { type ReadinessData } from '@/components/modernize/ReadinessPanel'
+import AgentEffortCard from '@/components/modernize/AgentEffortCard'
 
 import PillarBreadcrumb from '@/components/navigation/PillarBreadcrumb'
 
@@ -212,13 +213,13 @@ export default function ModernizePlanDetailPage() {
               Mark as planned
             </Button>
           )}
-          {plan.state === 'planned' && !plan.spawned_project_id && (
+          {plan.state === 'planned' && !plan.spawned_project_id && hasCapability('build') && (
             <Button size="sm" onClick={spawnBuild} disabled={spawning}>
               {spawning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
               Spawn Build project
             </Button>
           )}
-          {plan.spawned_project_id && (
+          {plan.spawned_project_id && hasCapability('build') && (
             <Button size="sm" variant="outline" asChild>
               <Link href={`/dashboard/projects/${plan.spawned_project_id}`}>
                 <ExternalLink className="h-4 w-4" />
@@ -242,6 +243,13 @@ export default function ModernizePlanDetailPage() {
           </span>
         ))}
       </div>
+
+      {(plan.assessment_json?.agent_effort || plan.assessment_json?.synthesis) && (
+        <AgentEffortCard
+          effort={plan.assessment_json.agent_effort}
+          synthesis={plan.assessment_json.synthesis}
+        />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="lg:col-span-2">
