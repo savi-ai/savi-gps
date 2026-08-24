@@ -119,9 +119,8 @@ export default function TopNavbar() {
     user?.full_name?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || 'U'
 
   const handleLogout = () => {
-    const tenantSlug = localStorage.getItem('tenant_slug') || 'default'
     logout()
-    router.push(`/${tenantSlug}/login`)
+    router.push('/login')
   }
 
   const getRoleDisplayName = (role: string) => {

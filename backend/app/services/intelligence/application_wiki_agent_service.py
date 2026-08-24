@@ -33,7 +33,6 @@ from app.services.intelligence.analysis_storage import (
 )
 from app.services.intelligence.github_credential_service import GitHubCredentialService
 from app.services.intelligence.repo_clone_service import RepoCloneService
-from app.services.intelligence.wiki_generation_settings import resolve_wiki_generation_settings
 
 
 class ApplicationWikiAgentService:
@@ -416,8 +415,10 @@ class ApplicationWikiAgentService:
                 age = datetime.now().timestamp() - started.stat().st_mtime
             except OSError:
                 age = 0
-            # Live CLI or a recent API run still in-process — don't start another.
-            if pid_alive or (not pid_file.is_file() and age < 900):
+            # Live CLI or a recent in-process run — don't start another.
+            # Composer path is fast; only block briefly when no CLI pid.
+            block_age = 900 if pid_file.is_file() else 120
+            if pid_alive or (not pid_file.is_file() and age < block_age):
                 return {
                     "ok": False,
                     "skipped": True,
@@ -436,35 +437,26 @@ class ApplicationWikiAgentService:
 
         workspace_info: Optional[Dict[str, Any]] = None
         try:
-            import asyncio
-
-            workspace_info = await asyncio.to_thread(
-                lambda: self.build_workspace(tenant_id, application_id, rows=rows)
+            from app.services.intelligence.application_wiki_composer import (
+                compose_application_wiki,
             )
-            gen_settings = resolve_wiki_generation_settings(self.db, tenant_id)
-            service_map = self._service_map_mermaid(tenant_id, application_id)
 
-            agent = WikiAgent()
-            state = await agent.process_application({
-                "application": {
-                    "name": app.name,
-                    "description": app.description,
-                    "domain": app.domain,
-                },
-                "application_id": application_id,
-                "tenant_id": tenant_id,
-                "workspace_path": workspace_info["workspace_path"],
-                "output_dir": analysis_dir,
-                "manifest": workspace_info["manifest"],
-                "service_map_mermaid": service_map,
-                "wiki_generation_settings": gen_settings,
-            })
+            # Deterministic compose from member wikis + service map (sample layout).
+            # No multi-repo clone / full-workspace LLM — optional architecture LLM
+            # is gated by WIKI_APP_ARCHITECTURE_LLM=1.
+            composed = await compose_application_wiki(
+                self.db,
+                tenant_id,
+                application_id,
+                enrich_architecture=True,
+            )
 
             site = self._upsert_site(
                 application=app,
-                wiki_html=state.get("wiki_html") or "",
-                wiki_json=state.get("wiki_json") or {},
-                generation_source=state.get("generation_source") or "wiki_agent_application",
+                wiki_html=composed.get("wiki_html") or "",
+                wiki_json=composed.get("wiki_json") or {},
+                generation_source=composed.get("generation_source")
+                or "application_wiki_composer",
             )
             self.db.commit()
 
@@ -481,10 +473,8 @@ class ApplicationWikiAgentService:
                     application_id=application_id,
                     application_name=app.name,
                     analysis_dir=analysis_dir,
-                    wiki_md=state.get("wiki_md"),
-                    sections_md=state.get("sections_md")
-                    if isinstance(state.get("sections_md"), dict)
-                    else None,
+                    wiki_md=composed.get("wiki_md"),
+                    sections_md=None,
                 )
             except Exception as export_err:
                 logger.warning(
@@ -497,8 +487,8 @@ class ApplicationWikiAgentService:
                 "ok": True,
                 "wiki_site_id": site.id,
                 "analysis_dir": str(analysis_dir),
-                "generation_source": state.get("generation_source"),
-                "member_count": len(workspace_info["manifest"].get("members") or []),
+                "generation_source": composed.get("generation_source"),
+                "member_count": len((composed.get("composite") or {}).get("members") or []),
                 "status": self.get_status(tenant_id, application_id),
             }
             if export_result is not None:

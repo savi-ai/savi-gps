@@ -24,7 +24,7 @@ export default function TenantLoginPage() {
   useEffect(() => {
     // Validate tenant from URL
     if (!tenantSlug) {
-      setError('Invalid tenant URL. Please access through a tenant URL (e.g., /tenant1/login)')
+      setError('Invalid tenant URL. Use /login for Alpha, or /default/login.')
     }
   }, [tenantSlug])
 
@@ -153,7 +153,7 @@ export default function TenantLoginPage() {
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                   <path d="M10 2C5.58 2 2 5.58 2 10s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm1 13H9v-2h2v2zm0-4H9V7h2v4z" fill="currentColor"/>
                 </svg>
-                <span>Please access through a tenant URL: /tenant1/login</span>
+                <span>Prefer /login for Alpha. Tenant URLs like /default/login also work.</span>
               </div>
             )}
 

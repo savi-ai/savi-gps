@@ -1,6 +1,6 @@
 """Script to create default users for each persona"""
 import sys
-import os
+import uuid
 from pathlib import Path
 
 # Add parent directory to path
@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.core.database import SessionLocal, User, Role, UserRole, Tenant
 from app.core.auth import get_password_hash, create_default_roles
-import uuid
+
+DEFAULT_TENANT_SLUG = "default"
+LEGACY_TENANT_SLUG = "tenant1"
 
 # Default users configuration
 DEFAULT_USERS = [
@@ -50,34 +52,80 @@ DEFAULT_USERS = [
 ]
 
 
+def ensure_default_tenant(db) -> Tenant:
+    """Ensure the Alpha soft-single-tenant row exists and return it.
+
+    Preference order: ``default`` → legacy ``tenant1`` → any active tenant → create ``default``.
+    """
+    tenant = db.query(Tenant).filter(Tenant.name == DEFAULT_TENANT_SLUG).first()
+    if tenant:
+        return tenant
+
+    tenant = db.query(Tenant).filter(Tenant.name == LEGACY_TENANT_SLUG).first()
+    if tenant:
+        print(
+            f"⚠ Using legacy tenant '{LEGACY_TENANT_SLUG}' "
+            f"(rename to '{DEFAULT_TENANT_SLUG}' when ready)"
+        )
+        return tenant
+
+    tenant = (
+        db.query(Tenant)
+        .filter(Tenant.is_active == True)  # noqa: E712
+        .order_by(Tenant.created_at.asc())
+        .first()
+    )
+    if tenant:
+        print(f"⚠ Using existing tenant '{tenant.name}' as default")
+        return tenant
+
+    tenant = Tenant(
+        id=str(uuid.uuid4()),
+        name=DEFAULT_TENANT_SLUG,
+        description="Default tenant",
+        is_active=True,
+    )
+    db.add(tenant)
+    db.flush()
+    print(f"✓ Created tenant '{DEFAULT_TENANT_SLUG}'")
+    return tenant
+
+
 def create_default_users():
     """Create default users for testing"""
     db = SessionLocal()
-    
+
     try:
         # Create default roles first
         create_default_roles(db)
         print("✓ Default roles created/verified")
-        
+
+        default_tenant = ensure_default_tenant(db)
+        tenant_id = default_tenant.id
+        print(f"✓ Binding users to tenant '{default_tenant.name}' ({tenant_id})")
+
         # Create users
         for user_data in DEFAULT_USERS:
             # Check if user already exists
             existing_user = db.query(User).filter(User.username == user_data["username"]).first()
-            
+
             if existing_user:
-                print(f"⚠ User '{user_data['username']}' already exists, skipping...")
+                if not existing_user.tenant_id:
+                    existing_user.tenant_id = tenant_id
+                    print(
+                        f"⚠ User '{user_data['username']}' exists — "
+                        f"bound to tenant '{default_tenant.name}'"
+                    )
+                else:
+                    print(f"⚠ User '{user_data['username']}' already exists, skipping...")
                 continue
-            
+
             # Get role
             role = db.query(Role).filter(Role.name == user_data["role"]).first()
             if not role:
                 print(f"✗ Role '{user_data['role']}' not found!")
                 continue
-            
-            # Get default tenant (tenant1) for user assignment
-            default_tenant = db.query(Tenant).filter(Tenant.name == "tenant1").first()
-            tenant_id = default_tenant.id if default_tenant else None
-            
+
             # Create user
             user_id = str(uuid.uuid4())
             user = User(
@@ -91,7 +139,7 @@ def create_default_users():
             )
             db.add(user)
             db.flush()
-            
+
             # Assign role
             user_role = UserRole(
                 id=str(uuid.uuid4()),
@@ -99,19 +147,21 @@ def create_default_users():
                 role_id=role.id
             )
             db.add(user_role)
-            
+
             print(f"✓ Created user '{user_data['username']}' with role '{user_data['role']}'")
-        
+
         db.commit()
         print("\n✅ Default users created successfully!")
         print("\nLogin Credentials:")
         print("=" * 60)
+        print(f"Open http://localhost:3000/login  (tenant: {default_tenant.name})")
+        print()
         for user_data in DEFAULT_USERS:
             print(f"Role: {user_data['role'].replace('_', ' ').title()}")
             print(f"  Username: {user_data['username']}")
             print(f"  Password: {user_data['password']}")
             print()
-        
+
     except Exception as e:
         db.rollback()
         print(f"✗ Error creating users: {e}")

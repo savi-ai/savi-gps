@@ -7,9 +7,7 @@ import './tenant-required.css'
 
 export default function TenantRequiredPage() {
   const router = useRouter()
-  const { currentTenant, logout, user, loading } = useAuth()
-  
-  const storedTenantSlug = typeof window !== 'undefined' ? localStorage.getItem('tenant_slug') : null
+  const { currentTenant, logout, loading } = useAuth()
 
   // If tenant becomes available, redirect to dashboard
   useEffect(() => {
@@ -17,15 +15,6 @@ export default function TenantRequiredPage() {
       router.push('/dashboard')
     }
   }, [currentTenant, loading, router])
-
-  const handleGoToLogin = () => {
-    if (storedTenantSlug) {
-      router.push(`/${storedTenantSlug}/login`)
-    } else {
-      // If no stored tenant, show message
-      alert('Please contact your administrator for the correct tenant URL.')
-    }
-  }
 
   // Show loading while checking tenant
   if (loading) {
@@ -47,42 +36,49 @@ export default function TenantRequiredPage() {
             <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>
         </div>
-        
-        <h1 className="tenant-required-title">Tenant Information Required</h1>
-        
+
+        <h1 className="tenant-required-title">Session needs a refresh</h1>
+
         <p className="tenant-required-message">
-          We couldn't identify your tenant information. To access the application, please use the tenant-specific URL that was provided to you.
+          We couldn&apos;t load your tenant context. For Alpha, sign in at{' '}
+          <code>/login</code> — no tenant path is required.
         </p>
-        
+
         <div className="tenant-required-details">
           <p className="tenant-required-subtitle">What you need to do:</p>
           <ul className="tenant-required-list">
-            <li>Access the application through your tenant-specific URL (e.g., <code>/tenant1/login</code> or <code>/tenant2/login</code>)</li>
-            <li>If you don't have the URL, please contact your system administrator</li>
-            <li>After logging in through the correct tenant URL, your session will be saved for future access</li>
+            <li>
+              Open <code>/login</code> and sign in again (seeded admin if you ran the seed script)
+            </li>
+            <li>
+              Optional: tenant-scoped URLs like <code>/default/login</code> still work for later
+              multi-tenant setups
+            </li>
+            <li>If this keeps happening, clear site data for localhost and try again</li>
           </ul>
         </div>
 
-        {storedTenantSlug && (
-          <div className="tenant-required-action">
-            <button 
-              className="tenant-required-button"
-              onClick={handleGoToLogin}
-            >
-              Go to Login ({storedTenantSlug})
-            </button>
-          </div>
-        )}
+        <div className="tenant-required-action">
+          <button
+            className="tenant-required-button"
+            onClick={() => {
+              logout()
+              router.push('/login')
+            }}
+          >
+            Go to Login
+          </button>
+        </div>
 
         <div className="tenant-required-footer">
-          <button 
+          <button
             className="tenant-required-link"
             onClick={() => {
               logout()
-              router.push('/')
+              router.push('/login')
             }}
           >
-            Return to Home
+            Sign out
           </button>
         </div>
       </div>

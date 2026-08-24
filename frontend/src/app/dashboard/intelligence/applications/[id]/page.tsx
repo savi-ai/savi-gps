@@ -268,7 +268,7 @@ export default function ApplicationDetailPage() {
     try {
       await apiClient.post(`/api/v1/intelligence/applications/${appId}/wiki/cancel`)
       await refreshWikiStatus()
-      setWikiBanner('Application wiki cancelled. You can Generate again (uses API, not Copilot CLI).')
+      setWikiBanner('Application wiki cancelled. You can Generate again (composed from member wikis).')
     } catch (err: unknown) {
       const detail =
         err && typeof err === 'object' && 'response' in err
@@ -598,10 +598,10 @@ export default function ApplicationDetailPage() {
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {wikiStatus === 'running'
-                        ? 'Cloning members and analyzing with the LLM API (not Copilot CLI).'
+                        ? 'Composing application wiki from member repos, service map, and readiness (no Copilot CLI).'
                         : wikiStatus === 'failed'
-                          ? 'Use Cancel if stuck, then Generate again for a full Deep Wiki HTML site.'
-                          : 'Uses the same HTML template as repository wikis (sidebar, Mermaid, sections).'}
+                          ? 'Use Cancel if stuck, then Generate again for the composite application wiki.'
+                          : 'Sample-style composite wiki: overview, architecture, repo index, APIs, stack, specs, live readiness & drift.'}
                     </p>
                   </div>
                   {wikiStatus && (

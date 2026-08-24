@@ -1129,6 +1129,14 @@ async def application_wiki_site_html(
     )
 
     site = ApplicationWikiAgentService(db).get_wiki_site(application_id)
+    from app.services.intelligence.application_wiki_composer import (
+        render_live_application_wiki_html,
+    )
+
+    live = render_live_application_wiki_html(db, user.tenant_id, application_id)
+    if live:
+        return HTMLResponse(content=live)
+
     if site and site.html_content:
         return HTMLResponse(content=site.html_content)
 

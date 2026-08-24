@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>checkout-app — Application Wiki</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        .top-header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: #fff;
+            border-bottom: 1px solid #e1e4e8;
+            padding: 16px 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .top-header h1 { font-size: 24px; font-weight: 600; margin: 0; }
+        .top-header .crumb { font-size: 13px; color: #6a737d; margin-top: 2px; }
+        .top-header .crumb a { color: #0366d6; text-decoration: none; }
+        .top-header .crumb a:hover { text-decoration: underline; }
+        .header-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+        .scope-badge {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #eef4ff; color: #2555a8;
+            border: 1px solid #cfe0fb;
+            padding: 4px 10px; border-radius: 14px;
+            font-size: 12px; font-weight: 600;
+        }
+        .scope-badge.live { background: #e8f5e9; color: #2e7d32; border-color: #c8e6c9; }
+        .scope-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+        .container { display: flex; }
+        aside {
+            width: 280px;
+            background: #fafbfc;
+            border-right: 1px solid #e1e4e8;
+            padding: 20px 0;
+            position: fixed;
+            left: 0;
+            top: 78px;
+            height: calc(100vh - 78px);
+            overflow-y: auto;
+        }
+        aside ul { list-style: none; padding: 0; }
+        aside li { margin: 0; }
+        aside a {
+            display: block;
+            padding: 6px 12px;
+            color: #0366d6;
+            text-decoration: none;
+            font-size: 13px;
+            border-radius: 3px;
+            transition: all 0.2s;
+        }
+        aside a:hover { background: #e8f0f8; color: #0256c7; }
+        aside .toc-level-2 { padding-left: 24px; }
+        aside .toc-level-3 { padding-left: 36px; }
+        main {
+            margin-left: 280px;
+            padding: 32px 48px;
+            max-width: 1000px;
+            margin-top: 78px;
+        }
+        section { margin-bottom: 48px; }
+        h2 {
+            font-size: 32px;
+            font-weight: 600;
+            margin: 40px 0 20px 0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e1e4e8;
+            scroll-margin-top: 80px;
+        }
+        h2 .synth-note {
+            display: block;
+            font-size: 12.5px;
+            font-weight: 500;
+            color: #9aa2ac;
+            text-transform: none;
+            letter-spacing: normal;
+            margin-top: 6px;
+            border: none;
+        }
+        h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 24px 0 12px 0;
+            scroll-margin-top: 80px;
+        }
+        h4 { font-size: 16px; font-weight: 600; margin: 16px 0 8px 0; }
+        p { margin-bottom: 12px; }
+        ul, ol { margin-left: 20px; margin-bottom: 12px; }
+        li { margin-bottom: 6px; }
+        code {
+            background: #f6f8fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 13px;
+        }
+        pre {
+            background: #f6f8fa;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 16px 0;
+            border: 1px solid #e1e4e8;
+            font-size: 12px;
+        }
+        pre code { background: none; padding: 0; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            border: 1px solid #e1e4e8;
+            font-size: 14px;
+        }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e1e4e8; }
+        th { background: #f6f8fa; font-weight: 600; }
+        .mermaid {
+            background: #f6f8fa;
+            padding: 16px;
+            border-radius: 6px;
+            border: 1px solid #e1e4e8;
+            margin: 20px 0;
+            display: flex;
+            justify-content: center;
+        }
+        .component-box {
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 20px 0;
+            background: #fafbfc;
+        }
+        .workflow-box {
+            background: #fffbea;
+            border-left: 4px solid #ffc107;
+            padding: 12px 16px;
+            margin: 12px 0;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .rule-box {
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            padding: 12px 16px;
+            margin: 8px 0;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .stat {
+            display: inline-block;
+            background: #fff;
+            border: 1px solid #e1e4e8;
+            padding: 8px 16px;
+            border-radius: 6px;
+            margin: 4px 12px 4px 0;
+            font-size: 13px;
+        }
+        .tech-badge {
+            display: inline-block;
+            background: #e1f5fe;
+            color: #0277bd;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin: 4px 4px 4px 0;
+            font-weight: 500;
+        }
+
+        /* --- Application-wiki additions, same visual language --- */
+
+        .repo-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 9px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin: 2px 4px 2px 0;
+            text-decoration: none;
+        }
+        .repo-badge:hover { text-decoration: none; filter: brightness(0.96); }
+        .repo-badge .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .repo-storefront { background: #e1f5fe; color: #0277bd; }
+        .repo-checkout   { background: #e8f5e9; color: #2e7d32; }
+        .repo-payments   { background: #f3e5f5; color: #7b1fa2; }
+        .dot-storefront { background: #0277bd; }
+        .dot-checkout   { background: #2e7d32; }
+        .dot-payments   { background: #7b1fa2; }
+
+        a.cite {
+            font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 12.5px;
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            padding: 2px 7px;
+            border-radius: 4px;
+            color: #24292e;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        a.cite:hover { border-color: #0366d6; color: #0366d6; }
+        a.cite .tick { color: #2e7d32; margin-left: 3px; }
+
+        .repo-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin: 16px 0;
+        }
+        @media (max-width: 820px) { .repo-grid { grid-template-columns: 1fr; } }
+        .repo-card { border-top: 3px solid #ccc; }
+        .repo-card.storefront { border-top-color: #0277bd; }
+        .repo-card.checkout { border-top-color: #2e7d32; }
+        .repo-card.payments { border-top-color: #7b1fa2; }
+        .repo-card h3 { margin-top: 0; font-family: SFMono-Regular, Consolas, monospace; font-size: 16px; }
+        .repo-card .meta {
+            display: flex; justify-content: space-between;
+            font-size: 12px; color: #6a737d;
+            margin-top: 12px; padding-top: 10px; border-top: 1px solid #e1e4e8;
+        }
+        .repo-card .open-link { font-size: 13px; font-weight: 600; display: inline-block; margin-top: 8px; }
+
+        .diagram-legend {
+            display: flex; gap: 24px; flex-wrap: wrap;
+            font-size: 12.5px; color: #6a737d;
+            margin: -8px 0 20px;
+        }
+        .diagram-legend .item { display: flex; align-items: center; gap: 8px; }
+        .legend-line { width: 26px; height: 0; border-top: 2px solid #555; display: inline-block; }
+        .legend-line.inferred { border-top: 2px dashed #7b1fa2; }
+
+        .readiness-top { display: flex; align-items: baseline; gap: 14px; margin: 10px 0 18px; flex-wrap: wrap; }
+        .readiness-score { font-size: 34px; font-weight: 700; color: #b8860b; }
+        .readiness-driver { font-size: 13px; color: #6a737d; }
+        .rbar-row { display: grid; grid-template-columns: 160px 1fr 36px; align-items: center; gap: 12px; font-size: 13px; margin-bottom: 10px; }
+        .rbar-label { display: flex; align-items: center; gap: 7px; font-family: SFMono-Regular, Consolas, monospace; color: #444; }
+        .rbar-track { height: 7px; background: #e9ecef; border-radius: 4px; overflow: hidden; }
+        .rbar-fill { height: 100%; background: #4caf50; }
+        .rbar-fill.mid { background: #ffc107; }
+        .rbar-val { text-align: right; color: #6a737d; }
+
+        .activity-list { border: 1px solid #e1e4e8; border-radius: 6px; background: #fff; }
+        .activity-item {
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 12px 16px; border-bottom: 1px solid #e1e4e8; font-size: 13.5px;
+        }
+        .activity-item:last-child { border-bottom: none; }
+        .activity-item .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+        .activity-item .time { margin-left: auto; color: #9aa2ac; font-size: 12px; white-space: nowrap; }
+    </style>
+</head>
+<body>
+    <div class="top-header">
+        <div>
+            <h1>📚 checkout-app Wiki</h1>
+            <div class="crumb"><a href="#">Applications</a> / checkout-app</div>
+        </div>
+        <div class="header-badges">
+            <span class="scope-badge live"><span class="dot"></span>Live</span>
+            <span class="scope-badge">🧩 3 repos</span>
+            <span class="scope-badge">🔄 Synthesized · cached 24h</span>
+        </div>
+    </div>
+    <div class="container">
+        <aside id="sidebar">
+            <ul id="toc"></ul>
+        </aside>
+        <main>
+
+<section id="overview">
+<h2>Overview</h2>
+<p><strong>checkout-app</strong> is the customer purchase flow — cart, order orchestration, and payment capture — composed from three member repositories: <a class="repo-badge repo-storefront" href="storefront-web-wiki.html"><span class="dot dot-storefront"></span>storefront-web</a>, <a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a>, and <a class="repo-badge repo-payments" href="payments-service-wiki.html"><span class="dot dot-payments"></span>payments-service</a>.</p>
+<div class="stat">3 Repositories</div>
+<div class="stat">2 Cross-repo contracts</div>
+<div class="stat">1 Drift finding</div>
+<div class="stat">Readiness 72/100</div>
+
+<h3>What this application does</h3>
+<p><a class="repo-badge repo-storefront" href="storefront-web-wiki.html"><span class="dot dot-storefront"></span>storefront-web</a> renders the cart and checkout UI and calls <a class="cite" href="checkout-api-wiki.html#business-logic">OrderController.java:118 <span class="tick">✓</span></a> in <a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a> to price and create the order. checkout-api authorizes and captures payment via <a class="cite" href="payments-service-wiki.html#business-logic">PaymentGateway.go:76 <span class="tick">✓</span></a> in <a class="repo-badge repo-payments" href="payments-service-wiki.html"><span class="dot dot-payments"></span>payments-service</a>, which holds the PCI boundary for the application.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li>Server-priced cart and checkout UI, with session state owned by storefront-web</li>
+<li>Order lifecycle orchestration and event publication owned by checkout-api</li>
+<li>Payment authorization and capture isolated in payments-service's PCI-DSS zone</li>
+<li>Async settlement reconciliation over Kafka between checkout-api and payments-service</li>
+</ul>
+</section>
+
+<section id="architecture">
+<h2>Composite Architecture
+<span class="synth-note">Solid edges are graph-derived (symbol/import evidence). Dashed edges are LLM-inferred and excluded from readiness scoring until confirmed.</span>
+</h2>
+
+<div class="diagram-legend">
+    <span class="item"><span class="legend-line"></span>Graph-derived edge</span>
+    <span class="item"><span class="legend-line inferred"></span>LLM-inferred edge</span>
+</div>
+
+<div class="mermaid">
+graph LR
+  subgraph SW["storefront-web"]
+    UI["CheckoutPage.tsx"]
+  end
+  subgraph CA["checkout-api"]
+    OC["OrderController.java"]
+  end
+  subgraph PS["payments-service"]
+    PG["PaymentGateway.go"]
+  end
+
+  UI -->|"POST /orders"| OC
+  OC -->|"gRPC AuthorizePayment"| PG
+  UI -.->|"client-side tokenization (inferred)"| PG
+
+  classDef sw fill:#e1f5fe,stroke:#0277bd,color:#0277bd;
+  classDef ca fill:#e8f5e9,stroke:#2e7d32,color:#2e7d32;
+  classDef ps fill:#f3e5f5,stroke:#7b1fa2,color:#7b1fa2;
+  class SW sw
+  class CA ca
+  class PS ps
+</div>
+
+<h3>Async Settlement Flow</h3>
+<div class="mermaid">
+flowchart LR
+  A["checkout-api: order created"] -->|"Kafka: order.created"| B["payments-service: consume event"]
+  B --> C["reconcile settlement ledger"]
+</div>
+</section>
+
+<section id="repos">
+<h2>Repo Index</h2>
+<p>Always available regardless of what the composite sections above can derive — the fallback layer for jumping straight into a member repo's own wiki.</p>
+<div class="repo-grid">
+    <div class="component-box repo-card storefront">
+        <h3>storefront-web</h3>
+        <p>Customer-facing cart and checkout UI. Owns session state and calls checkout-api for pricing and order creation.</p>
+        <a class="open-link" href="storefront-web-wiki.html">Open repo wiki →</a>
+        <div class="meta"><span>Owner: Web Platform</span><span>Indexed 3h ago</span></div>
+    </div>
+    <div class="component-box repo-card checkout">
+        <h3>checkout-api</h3>
+        <p>Order orchestration — cart pricing, order lifecycle, and event publication for downstream settlement.</p>
+        <a class="open-link" href="checkout-api-wiki.html">Open repo wiki →</a>
+        <div class="meta"><span>Owner: Commerce Core</span><span>Indexed 1h ago</span></div>
+    </div>
+    <div class="component-box repo-card payments">
+        <h3>payments-service</h3>
+        <p>Payment authorization and capture. Holds the PCI-DSS boundary; isolated network zone.</p>
+        <a class="open-link" href="payments-service-wiki.html">Open repo wiki →</a>
+        <div class="meta"><span>Owner: Payments</span><span>Indexed 6h ago</span></div>
+    </div>
+</div>
+</section>
+
+<section id="api-surface">
+<h2>Cross-Repo API Surface</h2>
+<table>
+<tr>
+<th>Contract</th>
+<th>Exposed by</th>
+<th>Consumed by</th>
+</tr>
+<tr>
+<td><code>POST /orders</code></td>
+<td><a class="repo-badge repo-checkout" href="checkout-api-wiki.html#api-spec"><span class="dot dot-checkout"></span>checkout-api</a></td>
+<td><a class="repo-badge repo-storefront" href="storefront-web-wiki.html"><span class="dot dot-storefront"></span>storefront-web</a></td>
+</tr>
+<tr>
+<td><code>gRPC AuthorizePayment / CapturePayment</code></td>
+<td><a class="repo-badge repo-payments" href="payments-service-wiki.html#api-spec"><span class="dot dot-payments"></span>payments-service</a></td>
+<td><a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a></td>
+</tr>
+<tr>
+<td><code>Kafka: order.created</code></td>
+<td><a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a></td>
+<td><a class="repo-badge repo-payments" href="payments-service-wiki.html"><span class="dot dot-payments"></span>payments-service</a> <span style="color:#9aa2ac; font-size:12px;">(async reconciliation)</span></td>
+</tr>
+</table>
+</section>
+
+<section id="tech-stack">
+<h2>Technology Stack
+<span class="synth-note">Union of member repo stacks — pure aggregation, no synthesis.</span>
+</h2>
+<h3>storefront-web</h3>
+<div class="tech-badge">Next.js 14.2</div>
+<div class="tech-badge">Redis (session cache)</div>
+
+<h3>checkout-api</h3>
+<div class="tech-badge">Spring Boot 3.2</div>
+<div class="tech-badge">Java 17</div>
+<div class="tech-badge">PostgreSQL 16</div>
+<div class="tech-badge">Kafka 3.7</div>
+
+<h3>payments-service</h3>
+<div class="tech-badge">Go 1.22</div>
+<div class="tech-badge">PostgreSQL 16</div>
+<div class="tech-badge">Kafka 3.7</div>
+</section>
+
+<section id="specs">
+<h2>Specs &amp; Steering
+<span class="synth-note">Federated across spec-rich member repos.</span>
+</h2>
+<div class="rule-box">No PII in application logs — active steering rule, applies to <a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a> and <a class="repo-badge repo-payments" href="payments-service-wiki.html"><span class="dot dot-payments"></span>payments-service</a></div>
+<div class="rule-box">All payment mutations require an idempotency key — REQ-014, active in <a class="repo-badge repo-payments" href="payments-service-wiki.html"><span class="dot dot-payments"></span>payments-service</a> (spec-rich)</div>
+<div class="workflow-box">Cart totals must be recalculated server-side before order creation — <strong>superseded</strong> by REQ-021 in <a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a></div>
+</section>
+
+<section id="readiness">
+<h2>Readiness &amp; Drift</h2>
+<div class="component-box">
+    <div class="readiness-top">
+        <div class="readiness-score">72<span style="font-size:16px; color:#9aa2ac;">/100</span></div>
+        <div class="readiness-driver">Application score is worst-case across member repos — driven down by <strong>payments-service</strong></div>
+    </div>
+    <div class="rbar-row">
+        <span class="rbar-label"><span class="dot dot-storefront" style="width:7px;height:7px;border-radius:50%;display:inline-block;"></span>storefront-web</span>
+        <div class="rbar-track"><div class="rbar-fill" style="width:88%"></div></div>
+        <span class="rbar-val">88</span>
+    </div>
+    <div class="rbar-row">
+        <span class="rbar-label"><span class="dot dot-checkout" style="width:7px;height:7px;border-radius:50%;display:inline-block;"></span>checkout-api</span>
+        <div class="rbar-track"><div class="rbar-fill" style="width:79%"></div></div>
+        <span class="rbar-val">79</span>
+    </div>
+    <div class="rbar-row">
+        <span class="rbar-label"><span class="dot dot-payments" style="width:7px;height:7px;border-radius:50%;display:inline-block;"></span>payments-service</span>
+        <div class="rbar-track"><div class="rbar-fill mid" style="width:61%"></div></div>
+        <span class="rbar-val">61</span>
+    </div>
+    <div class="workflow-box" style="margin-top:16px;">
+        <strong>Drift detected:</strong> <a class="repo-badge repo-checkout" href="checkout-api-wiki.html"><span class="dot dot-checkout"></span>checkout-api</a> — <code>OrderController.submit</code> no longer matches <code>requirements.md</code> REQ-014. <a href="checkout-api-wiki.html#business-logic">View drift report →</a>
+    </div>
+</div>
+</section>
+
+<section id="activity">
+<h2>Recent Activity</h2>
+<div class="activity-list">
+    <div class="activity-item">
+        <span class="dot dot-checkout"></span>
+        <span><strong>checkout-api</strong> — PR #482 merged: add idempotency key validation</span>
+        <span class="time">2h ago</span>
+    </div>
+    <div class="activity-item">
+        <span class="dot dot-payments"></span>
+        <span><strong>payments-service</strong> — wiki regenerated after commit <code>9f3a1c2</code></span>
+        <span class="time">6h ago</span>
+    </div>
+    <div class="activity-item">
+        <span class="dot dot-storefront"></span>
+        <span><strong>storefront-web</strong> — spec drift resolved on <code>CheckoutPage.tsx</code></span>
+        <span class="time">1d ago</span>
+    </div>
+    <div class="activity-item">
+        <span class="dot dot-checkout"></span>
+        <span><strong>checkout-api</strong> — new steering rule added: idempotency key requirement</span>
+        <span class="time">2d ago</span>
+    </div>
+</div>
+</section>
+
+        </main>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+
+        const sections = [
+            { id: 'overview', title: '📋 Overview', level: 1 },
+            { id: 'architecture', title: '🏗️ Composite Architecture', level: 1 },
+            { id: 'repos', title: '📚 Repo Index', level: 1 },
+            { id: 'api-surface', title: '🔌 Cross-Repo API Surface', level: 1 },
+            { id: 'tech-stack', title: '📦 Technology Stack', level: 1 },
+            { id: 'specs', title: '🧭 Specs & Steering', level: 1 },
+            { id: 'readiness', title: '🚦 Readiness & Drift', level: 1 },
+            { id: 'activity', title: '🕒 Recent Activity', level: 1 }
+        ];
+
+        const toc = document.getElementById('toc');
+        sections.forEach(s => {
+            const li = document.createElement('li');
+            li.className = `toc-level-${s.level}`;
+            const a = document.createElement('a');
+            a.href = `#${s.id}`;
+            a.textContent = s.title;
+            li.appendChild(a);
+            toc.appendChild(li);
+        });
+    </script>
+</body>
+</html>
