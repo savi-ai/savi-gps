@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { useAuth, getTenantFromPath } from '@/contexts/AuthContext'
+import {
+  useAuth,
+  getTenantFromPath,
+  pickDefaultTenant,
+  rememberTenantSlug,
+  DEFAULT_TENANT_SLUG,
+} from '@/contexts/AuthContext'
 import './login.css'
 
 export default function LoginPage() {
@@ -11,28 +17,56 @@ export default function LoginPage() {
   const { login, register, isAuthenticated, currentTenant, fetchTenants } = useAuth()
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [resolvingTenant, setResolvingTenant] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
+  const [resolvedSlug, setResolvedSlug] = useState<string | null>(null)
+
   // Form state
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState('product_manager')
-  
-  // Get tenant from URL path
-  const tenantSlug = getTenantFromPath(pathname || '')
-  
+
+  // Alpha: /login works without a tenant path; optional /[tenant]/login still supported
   useEffect(() => {
-    // Validate tenant from URL
-    if (!tenantSlug) {
-      setError('Invalid tenant URL. Please access through a tenant URL (e.g., /tenant1/login or /t/tenant1/login)')
+    let cancelled = false
+    const resolve = async () => {
+      setResolvingTenant(true)
+      setError(null)
+      try {
+        const fromPath = getTenantFromPath(pathname || '')
+        const list = await fetchTenants()
+        const picked =
+          (fromPath ? list.find((t) => t.name === fromPath) : undefined) ||
+          pickDefaultTenant(list)
+        const slug =
+          fromPath ||
+          picked?.name ||
+          (typeof window !== 'undefined' ? localStorage.getItem('tenant_slug') : null) ||
+          DEFAULT_TENANT_SLUG
+        rememberTenantSlug(slug)
+        if (!cancelled) setResolvedSlug(slug)
+      } catch {
+        const slug =
+          getTenantFromPath(pathname || '') ||
+          (typeof window !== 'undefined' ? localStorage.getItem('tenant_slug') : null) ||
+          DEFAULT_TENANT_SLUG
+        rememberTenantSlug(slug)
+        if (!cancelled) setResolvedSlug(slug)
+      } finally {
+        if (!cancelled) setResolvingTenant(false)
+      }
     }
-  }, [tenantSlug])
+    void resolve()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolve once per path
+  }, [pathname])
 
   useEffect(() => {
     if (isAuthenticated && currentTenant) {
-      // Redirect to dashboard (without tenant in URL)
       router.push('/dashboard')
     }
   }, [isAuthenticated, currentTenant, router])
@@ -42,20 +76,15 @@ export default function LoginPage() {
     setError(null)
     setLoading(true)
 
-    if (!tenantSlug) {
-      setError('Tenant is required. Please access through a tenant URL.')
-      setLoading(false)
-      return
-    }
-
     try {
+      if (!localStorage.getItem('tenant_slug') && resolvedSlug) {
+        rememberTenantSlug(resolvedSlug)
+      }
       if (isLogin) {
         await login(username, password)
-        // Redirect to dashboard without tenant in URL
         router.push('/dashboard')
       } else {
         await register(username, email, password, fullName, role)
-        // Redirect to dashboard without tenant in URL
         router.push('/dashboard')
       }
     } catch (err: any) {
@@ -125,8 +154,8 @@ export default function LoginPage() {
                 {isLogin ? 'Welcome back' : 'Create account'}
               </h2>
               <p className="login-form-subtitle">
-                {isLogin 
-                  ? 'Sign in to continue to Savi GPS' 
+                {isLogin
+                  ? 'Sign in to continue to Savi GPS'
                   : 'Get started with your free account'}
               </p>
             </div>
@@ -138,15 +167,6 @@ export default function LoginPage() {
                   <path d="M10 6V10M10 14H10.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                 </svg>
                 <span>{error}</span>
-              </div>
-            )}
-            
-            {!tenantSlug && (
-              <div className="login-error" style={{ backgroundColor: '#fef3c7', borderColor: '#fbbf24', color: '#92400e' }}>
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path d="M10 2C5.58 2 2 5.58 2 10s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm1 13H9v-2h2v2zm0-4H9V7h2v4z" fill="currentColor"/>
-                </svg>
-                <span>Please access through a tenant URL: /tenant1/login or /t/tenant1/login</span>
               </div>
             )}
 
@@ -220,9 +240,9 @@ export default function LoginPage() {
               <button
                 type="submit"
                 className="login-submit-button"
-                disabled={loading}
+                disabled={loading || resolvingTenant}
               >
-                {loading ? (
+                {loading || resolvingTenant ? (
                   <>
                     <svg className="login-spinner" width="20" height="20" viewBox="0 0 20 20" fill="none">
                       <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="31.416" strokeDashoffset="31.416">
@@ -230,7 +250,7 @@ export default function LoginPage() {
                         <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416;-31.416" repeatCount="indefinite"/>
                       </circle>
                     </svg>
-                    <span>Please wait...</span>
+                    <span>{resolvingTenant ? 'Preparing…' : 'Please wait...'}</span>
                   </>
                 ) : (
                   <span>{isLogin ? 'Sign In' : 'Create Account'}</span>

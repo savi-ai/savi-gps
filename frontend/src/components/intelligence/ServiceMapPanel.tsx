@@ -26,6 +26,9 @@ interface ServiceMapEdge {
   kind: string
   evidence: string
   confidence?: string
+  evidence_paths?: string[]
+  evidence_snippet?: string | null
+  why_linked?: string
 }
 
 interface ServiceMapResult {
@@ -138,10 +141,10 @@ export function ServiceMapPanel({ applicationId, repositoryCount }: ServiceMapPa
 
         {result.edges.length > 0 && (
           <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Detected links</p>
+            <p className="text-xs font-medium text-muted-foreground">Why linked</p>
             <ul className="divide-y rounded-md border text-sm">
               {result.edges.map((edge, idx) => (
-                <li key={`${edge.source_repository_id}-${edge.target_repository_id}-${idx}`} className="px-3 py-2">
+                <li key={`${edge.source_repository_id}-${edge.target_repository_id}-${idx}`} className="px-3 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{edge.source_name}</span>
                     <span className="text-muted-foreground">→</span>
@@ -149,8 +152,33 @@ export function ServiceMapPanel({ applicationId, repositoryCount }: ServiceMapPa
                     <Badge variant="secondary" className="text-xs capitalize">
                       {edge.kind.replace(/_/g, ' ')}
                     </Badge>
+                    {edge.confidence && (
+                      <Badge variant="outline" className="text-xs capitalize">
+                        {edge.confidence} confidence
+                      </Badge>
+                    )}
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{edge.evidence}</p>
+                  <p className="mt-1.5 text-sm">{edge.why_linked || edge.evidence}</p>
+                  {edge.evidence_snippet && (
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {edge.evidence_snippet}
+                    </p>
+                  )}
+                  {edge.evidence_paths && edge.evidence_paths.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {edge.evidence_paths.map((filePath) => (
+                        <li key={filePath}>
+                          <Button variant="link" size="sm" className="h-auto px-0 font-mono text-xs" asChild>
+                            <Link
+                              href={`/dashboard/intelligence/repositories/${edge.source_repository_id}?tab=wiki&file=${encodeURIComponent(filePath)}`}
+                            >
+                              {filePath}
+                            </Link>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" asChild>
                       <Link

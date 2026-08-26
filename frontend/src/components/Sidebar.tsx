@@ -187,7 +187,7 @@ const NAV_GROUPS: NavGroup[] = [
 export default function Sidebar() {
   const router = useRouter()
   const pathname = usePathname()
-  const { user, hasPermission, hasRole, hasCapability, logout, currentTenant } = useAuth()
+  const { user, hasPermission, hasRole, hasCapability, logout, currentTenant, tenants } = useAuth()
 
   const getRoleDisplayName = (role: string) => {
     const roleMap: Record<string, string> = {
@@ -220,9 +220,8 @@ export default function Sidebar() {
   }
 
   const handleLogout = () => {
-    const tenantSlug = localStorage.getItem('tenant_slug') || 'default'
     logout()
-    router.push(`/${tenantSlug}/login`)
+    router.push('/login')
   }
 
   const userInitials =
@@ -257,7 +256,7 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      {currentTenant && (
+      {currentTenant && tenants.length > 1 && (
         <div className="px-4 py-2">
           <div className="rounded-md bg-sidebar-accent px-3 py-1.5 text-xs text-sidebar-accent-foreground">
             <span className="text-sidebar-foreground/50">Tenant · </span>

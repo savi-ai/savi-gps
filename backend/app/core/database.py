@@ -989,35 +989,72 @@ def init_db():
                     conn.commit()
                     logger.info("Created tenants table")
                 
-                # Ensure two default tenants exist
+                # Alpha soft single-tenant: seed exactly one active tenant named "default"
                 tenant_result = conn.execute(text("SELECT COUNT(*) as count FROM tenants"))
                 tenant_count = tenant_result.fetchone()[0]
-                
+
                 if tenant_count == 0:
-                    # Create two default tenants
                     import uuid
-                    tenant1_id = str(uuid.uuid4())
-                    tenant2_id = str(uuid.uuid4())
+                    default_tenant_id = str(uuid.uuid4())
                     conn.execute(text("""
                         INSERT INTO tenants (id, name, description, is_active, created_at, updated_at)
-                        VALUES 
-                        (:id1, 'tenant1', 'Tenant 1', 1, datetime('now'), datetime('now')),
-                        (:id2, 'tenant2', 'Tenant 2', 1, datetime('now'), datetime('now'))
-                    """), {"id1": tenant1_id, "id2": tenant2_id})
+                        VALUES
+                        (:id, 'default', 'Default tenant', 1, datetime('now'), datetime('now'))
+                    """), {"id": default_tenant_id})
                     conn.commit()
-                    logger.info(f"Created two default tenants: tenant1 (id: {tenant1_id}) and tenant2 (id: {tenant2_id})")
-                elif tenant_count == 1:
-                    # Check if we need to add tenant2
-                    existing_tenant = conn.execute(text("SELECT name FROM tenants LIMIT 1")).fetchone()
-                    if existing_tenant:
-                        import uuid
-                        tenant2_id = str(uuid.uuid4())
-                        conn.execute(text("""
-                            INSERT INTO tenants (id, name, description, is_active, created_at, updated_at)
-                            VALUES (:id, 'tenant2', 'Tenant 2', 1, datetime('now'), datetime('now'))
-                        """), {"id": tenant2_id})
+                    logger.info(
+                        "Created default Alpha tenant: default (id: %s)", default_tenant_id
+                    )
+                else:
+                    # Soft Alpha migration: rename legacy tenant1 → default when safe
+                    has_default = conn.execute(
+                        text("SELECT 1 FROM tenants WHERE name = 'default' LIMIT 1")
+                    ).fetchone()
+                    legacy = conn.execute(
+                        text("SELECT id FROM tenants WHERE name = 'tenant1' LIMIT 1")
+                    ).fetchone()
+                    if not has_default and legacy:
+                        conn.execute(
+                            text(
+                                "UPDATE tenants SET name = 'default', "
+                                "description = COALESCE(description, 'Default tenant'), "
+                                "updated_at = datetime('now') WHERE id = :id"
+                            ),
+                            {"id": legacy[0]},
+                        )
                         conn.commit()
-                        logger.info(f"Created tenant2 (id: {tenant2_id})")
+                        logger.info(
+                            "Renamed legacy tenant1 → default (id: %s) for Alpha soft single-tenant",
+                            legacy[0],
+                        )
+
+                    # Deactivate unused legacy tenant2 (no users) so Alpha UI hides switcher
+                    if inspector.has_table("users"):
+                        unused_t2 = conn.execute(
+                            text(
+                                """
+                                SELECT t.id FROM tenants t
+                                WHERE t.name = 'tenant2' AND t.is_active = 1
+                                  AND NOT EXISTS (
+                                    SELECT 1 FROM users u WHERE u.tenant_id = t.id
+                                  )
+                                LIMIT 1
+                                """
+                            )
+                        ).fetchone()
+                        if unused_t2:
+                            conn.execute(
+                                text(
+                                    "UPDATE tenants SET is_active = 0, "
+                                    "updated_at = datetime('now') WHERE id = :id"
+                                ),
+                                {"id": unused_t2[0]},
+                            )
+                            conn.commit()
+                            logger.info(
+                                "Deactivated unused legacy tenant2 (id: %s) for Alpha",
+                                unused_t2[0],
+                            )
                 
                 # Migration: Add tenant_id to users table
                 if inspector.has_table("users"):
@@ -1061,8 +1098,16 @@ def init_db():
                     ).fetchone()[0]
                     if orphan_count > 0:
                         tenant_row = conn.execute(
-                            text("SELECT id FROM tenants WHERE name = 'tenant1' LIMIT 1")
+                            text(
+                                "SELECT id FROM tenants WHERE name = 'default' LIMIT 1"
+                            )
                         ).fetchone()
+                        if not tenant_row:
+                            tenant_row = conn.execute(
+                                text(
+                                    "SELECT id FROM tenants WHERE name = 'tenant1' LIMIT 1"
+                                )
+                            ).fetchone()
                         if not tenant_row:
                             tenant_row = conn.execute(text("SELECT id FROM tenants LIMIT 1")).fetchone()
                         if tenant_row:

@@ -65,9 +65,17 @@ export function WikiHtmlIframe({
           return
         }
 
+        // Absolute in-app paths (e.g. /wiki/repositories/…) must leave the iframe.
+        if (rawHref.startsWith('/')) {
+          event.preventDefault()
+          const dest = `${window.location.origin}${rawHref}`
+          window.open(dest, '_blank', 'noopener,noreferrer')
+          return
+        }
+
         let resolved: URL
         try {
-          resolved = new URL(rawHref, iframe.contentWindow?.location.href || window.location.href)
+          resolved = new URL(rawHref, window.location.href)
         } catch {
           return
         }
@@ -75,14 +83,6 @@ export function WikiHtmlIframe({
         // Same-origin app routes must not load inside the iframe (nesting bug).
         if (resolved.origin === window.location.origin) {
           event.preventDefault()
-          if (resolved.hash && resolved.pathname === new URL(url).pathname) {
-            const id = decodeURIComponent(resolved.hash.slice(1))
-            const el =
-              (id && doc.getElementById(id)) ||
-              (id && doc.querySelector(`[name="${CSS.escape(id)}"]`))
-            el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            return
-          }
           window.open(resolved.href, '_blank', 'noopener,noreferrer')
         }
       }

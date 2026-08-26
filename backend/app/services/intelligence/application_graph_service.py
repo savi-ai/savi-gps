@@ -25,6 +25,7 @@ from app.services.intelligence.blast_radius_service import BlastRadiusService
 
 VIEW_TYPE = "service_map"
 SERVICE_MAP_FILE = "service_map.json"
+SERVICE_MAP_SCHEMA_VERSION = 2
 _CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _CACHE_TTL_SECONDS = 3600
 
@@ -37,6 +38,57 @@ ARTIFACT_RE = re.compile(r"<artifactId>([^<]+)</artifactId>", re.IGNORECASE)
 NPM_DEP_RE = re.compile(r"\"([^\"]+)\"\s*:\s*\"[^\"]*\"", re.MULTILINE)
 PROTO_MESSAGE_RE = re.compile(r"\bmessage\s+(\w+)\s*\{")
 OPENAPI_PATH_RE = re.compile(r"[\"'](/[a-zA-Z0-9_./{}-]+)[\"']")
+REST_CLIENT_RE = re.compile(
+    r"(?:RestTemplate|WebClient|HttpClient|axios|fetch)\s*\([^)]*[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
+
+
+def _snippet(text: str, needle: str, *, width: int = 120) -> str:
+    idx = text.lower().find(needle.lower())
+    if idx < 0:
+        return text[:width].strip()
+    start = max(0, idx - 40)
+    end = min(len(text), idx + len(needle) + 40)
+    bit = text[start:end].replace("\n", " ").strip()
+    if start > 0:
+        bit = "…" + bit
+    if end < len(text):
+        bit = bit + "…"
+    return bit[:width]
+
+
+def _first_file_match(
+    sources: List[Tuple[str, str]],
+    predicate,
+) -> Tuple[Optional[str], Optional[str]]:
+    for path, text in sources:
+        if predicate(path, text):
+            return path, text
+    return None, None
+
+
+def _make_edge(
+    source: MemberProfile,
+    target: MemberProfile,
+    *,
+    kind: str,
+    evidence: str,
+    confidence: str,
+    evidence_paths: Optional[List[str]] = None,
+    evidence_snippet: Optional[str] = None,
+) -> ServiceEdge:
+    return ServiceEdge(
+        source_repository_id=source.repository_id,
+        target_repository_id=target.repository_id,
+        source_name=source.display_name,
+        target_name=target.display_name,
+        kind=kind,
+        evidence=evidence,
+        confidence=confidence,
+        evidence_paths=evidence_paths or [],
+        evidence_snippet=evidence_snippet,
+    )
 
 
 @dataclass
@@ -48,7 +100,9 @@ class MemberProfile:
     status: str
     aliases: Set[str] = field(default_factory=set)
     api_paths: List[str] = field(default_factory=list)
+    api_path_sources: Dict[str, str] = field(default_factory=dict)
     corpus: str = ""
+    file_sources: List[Tuple[str, str]] = field(default_factory=list)
     package_names: Set[str] = field(default_factory=set)
     proto_messages: Set[str] = field(default_factory=set)
     graph_available: bool = False
@@ -64,6 +118,8 @@ class ServiceEdge:
     kind: str
     evidence: str
     confidence: str = "medium"
+    evidence_paths: List[str] = field(default_factory=list)
+    evidence_snippet: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -74,8 +130,18 @@ class ServiceEdge:
             "kind": self.kind,
             "evidence": self.evidence,
             "confidence": self.confidence,
+            "evidence_paths": self.evidence_paths,
+            "evidence_snippet": self.evidence_snippet,
+            "why_linked": self._why_linked(),
             "cross_repo": True,
         }
+
+    def _why_linked(self) -> str:
+        kind_label = self.kind.replace("_", " ")
+        if self.evidence_paths:
+            paths = ", ".join(f"`{p}`" for p in self.evidence_paths[:3])
+            return f"{kind_label}: {self.evidence} (in {paths})"
+        return f"{kind_label}: {self.evidence}"
 
 
 def _normalize_token(value: str) -> str:
@@ -189,7 +255,6 @@ def build_summary_sentence(
 
 def _detect_edges(members: List[MemberProfile]) -> List[ServiceEdge]:
     edges: List[ServiceEdge] = []
-    by_id = {m.repository_id: m for m in members}
 
     for source in members:
         corpus_lower = source.corpus.lower()
@@ -200,97 +265,158 @@ def _detect_edges(members: List[MemberProfile]) -> List[ServiceEdge]:
             for alias in sorted(target.aliases, key=len, reverse=True):
                 if len(alias) < 3:
                     continue
-                if alias in corpus_lower:
+
+                def alias_match(_path: str, text: str, token: str = alias) -> bool:
+                    return token in text.lower()
+
+                path, text = _first_file_match(source.file_sources, alias_match)
+                if path or alias in corpus_lower:
+                    snippet_text = text or source.corpus
                     edges.append(
-                        ServiceEdge(
-                            source_repository_id=source.repository_id,
-                            target_repository_id=target.repository_id,
-                            source_name=source.display_name,
-                            target_name=target.display_name,
+                        _make_edge(
+                            source,
+                            target,
                             kind="name_reference",
                             evidence=f"References `{alias}` in {source.display_name} source",
                             confidence="low",
+                            evidence_paths=[path] if path else [],
+                            evidence_snippet=_snippet(snippet_text, alias) if snippet_text else None,
                         )
                     )
                     break
 
             for url in HTTP_URL_RE.findall(source.corpus):
                 host = url.split("://", 1)[-1].split("/")[0].lower()
-                if any(alias in host for alias in target.aliases if len(alias) >= 4):
-                    edges.append(
-                        ServiceEdge(
-                            source_repository_id=source.repository_id,
-                            target_repository_id=target.repository_id,
-                            source_name=source.display_name,
-                            target_name=target.display_name,
-                            kind="http_client",
-                            evidence=f"HTTP URL `{url[:80]}`",
-                            confidence="high",
-                        )
+                if not any(alias in host for alias in target.aliases if len(alias) >= 4):
+                    continue
+
+                def url_match(_path: str, text: str, needle: str = url[:60]) -> bool:
+                    return needle in text
+
+                path, text = _first_file_match(source.file_sources, url_match)
+                edges.append(
+                    _make_edge(
+                        source,
+                        target,
+                        kind="http_client",
+                        evidence=f"HTTP URL `{url[:80]}`",
+                        confidence="high",
+                        evidence_paths=[path] if path else [],
+                        evidence_snippet=_snippet(text or source.corpus, url[:40]) if text or source.corpus else None,
                     )
-                    break
+                )
+                break
 
             for match in FEIGN_RE.findall(source.corpus):
                 token = _normalize_token(match)
-                if token in target.aliases:
-                    edges.append(
-                        ServiceEdge(
-                            source_repository_id=source.repository_id,
-                            target_repository_id=target.repository_id,
-                            source_name=source.display_name,
-                            target_name=target.display_name,
-                            kind="http_client",
-                            evidence=f"@FeignClient `{match}`",
-                            confidence="high",
-                        )
+                if token not in target.aliases:
+                    continue
+
+                def feign_match(_path: str, text: str, needle: str = match) -> bool:
+                    return f"@FeignClient" in text and needle in text
+
+                path, text = _first_file_match(source.file_sources, feign_match)
+                edges.append(
+                    _make_edge(
+                        source,
+                        target,
+                        kind="http_client",
+                        evidence=f"@FeignClient `{match}`",
+                        confidence="high",
+                        evidence_paths=[path] if path else [],
+                        evidence_snippet=_snippet(text or source.corpus, match) if text or source.corpus else None,
                     )
-                    break
+                )
+                break
+
+            for client_url in REST_CLIENT_RE.findall(source.corpus):
+                host = client_url.split("://", 1)[-1].split("/")[0].lower() if "://" in client_url else client_url.lower()
+                if not any(alias in host or alias in client_url.lower() for alias in target.aliases if len(alias) >= 3):
+                    continue
+
+                def client_match(_path: str, text: str, needle: str = client_url[:40]) -> bool:
+                    return needle in text
+
+                path, text = _first_file_match(source.file_sources, client_match)
+                edges.append(
+                    _make_edge(
+                        source,
+                        target,
+                        kind="http_client",
+                        evidence=f"HTTP client call `{client_url[:80]}`",
+                        confidence="high",
+                        evidence_paths=[path] if path else [],
+                        evidence_snippet=_snippet(text or source.corpus, client_url[:30]) if text or source.corpus else None,
+                    )
+                )
+                break
 
             for pkg in source.package_names:
                 token = _normalize_token(pkg)
-                if token in target.aliases:
-                    edges.append(
-                        ServiceEdge(
-                            source_repository_id=source.repository_id,
-                            target_repository_id=target.repository_id,
-                            source_name=source.display_name,
-                            target_name=target.display_name,
-                            kind="package_dep",
-                            evidence=f"Package dependency `{pkg}`",
-                            confidence="medium",
-                        )
+                if token not in target.aliases:
+                    continue
+
+                def pkg_match(path: str, text: str, artifact: str = pkg) -> bool:
+                    return (
+                        path.endswith("pom.xml") or path.endswith("package.json")
+                    ) and artifact in text
+
+                path, text = _first_file_match(source.file_sources, pkg_match)
+                edges.append(
+                    _make_edge(
+                        source,
+                        target,
+                        kind="package_dep",
+                        evidence=f"Package dependency `{pkg}`",
+                        confidence="medium",
+                        evidence_paths=[path] if path else [],
+                        evidence_snippet=_snippet(text or source.corpus, pkg) if text or source.corpus else None,
                     )
-                    break
+                )
+                break
 
             shared_proto = source.proto_messages & target.proto_messages
             if shared_proto:
                 msg = sorted(shared_proto)[0]
+
+                def proto_match(path: str, text: str, message: str = msg) -> bool:
+                    return path.endswith(".proto") and f"message {message}" in text
+
+                path, text = _first_file_match(source.file_sources, proto_match)
                 edges.append(
-                    ServiceEdge(
-                        source_repository_id=source.repository_id,
-                        target_repository_id=target.repository_id,
-                        source_name=source.display_name,
-                        target_name=target.display_name,
+                    _make_edge(
+                        source,
+                        target,
                         kind="shared_proto",
                         evidence=f"Shared proto message `{msg}`",
                         confidence="medium",
+                        evidence_paths=[path] if path else [],
+                        evidence_snippet=_snippet(text or source.corpus, msg) if text or source.corpus else None,
                     )
                 )
 
-            for path in target.api_paths:
-                if path and path in source.corpus:
-                    edges.append(
-                        ServiceEdge(
-                            source_repository_id=source.repository_id,
-                            target_repository_id=target.repository_id,
-                            source_name=source.display_name,
-                            target_name=target.display_name,
-                            kind="openapi_consumer",
-                            evidence=f"References API path `{path}`",
-                            confidence="high",
-                        )
+            for api_path in target.api_paths:
+                if not api_path or api_path not in source.corpus:
+                    continue
+
+                def path_match(_path: str, text: str, needle: str = api_path) -> bool:
+                    return needle in text
+
+                file_path, text = _first_file_match(source.file_sources, path_match)
+                provider_path = target.api_path_sources.get(api_path)
+                evidence_paths = [p for p in [file_path, provider_path] if p]
+                edges.append(
+                    _make_edge(
+                        source,
+                        target,
+                        kind="openapi_consumer",
+                        evidence=f"References API path `{api_path}`",
+                        confidence="high",
+                        evidence_paths=evidence_paths,
+                        evidence_snippet=_snippet(text or source.corpus, api_path) if text or source.corpus else None,
                     )
-                    break
+                )
+                break
 
     deduped: List[ServiceEdge] = []
     seen: Set[Tuple[str, str, str]] = set()
@@ -358,9 +484,16 @@ class ApplicationGraphService:
         if isinstance(api_surface, list):
             for item in api_surface:
                 if isinstance(item, dict):
-                    for field in ("path", "route", "endpoint", "file"):
+                    path_val = None
+                    for field in ("path", "route", "endpoint"):
                         if item.get(field):
-                            profile.api_paths.append(str(item[field]))
+                            path_val = str(item[field])
+                            profile.api_paths.append(path_val)
+                            if item.get("file"):
+                                profile.api_path_sources[path_val] = str(item["file"])
+                            break
+                    if not path_val and item.get("file"):
+                        profile.api_path_sources.setdefault(str(item["file"]), str(item["file"]))
                 elif isinstance(item, str):
                     for match in OPENAPI_PATH_RE.findall(item):
                         profile.api_paths.append(match)
@@ -373,15 +506,23 @@ class ApplicationGraphService:
         )
         chunk_texts: List[str] = []
         for chunk in chunks:
-            chunk_texts.append(chunk.content or "")
-            path = (chunk.file_path or "").lower()
+            path = chunk.file_path or "unknown"
             text = chunk.content or ""
-            if path.endswith("pom.xml"):
+            profile.file_sources.append((path, text))
+            chunk_texts.append(text)
+            path_lower = path.lower()
+            if path_lower.endswith("pom.xml"):
                 profile.package_names.update(ARTIFACT_RE.findall(text))
-            if path.endswith("package.json") and '"dependencies"' in text:
+            if path_lower.endswith("package.json") and '"dependencies"' in text:
                 profile.package_names.update(NPM_DEP_RE.findall(text))
-            if path.endswith(".proto"):
+            if path_lower.endswith(".proto"):
                 profile.proto_messages.update(PROTO_MESSAGE_RE.findall(text))
+            if path_lower.endswith((".yaml", ".yml", ".json")) and (
+                "openapi" in text.lower() or "swagger" in text.lower()
+            ):
+                for match in OPENAPI_PATH_RE.findall(text):
+                    profile.api_paths.append(match)
+                    profile.api_path_sources.setdefault(match, path)
 
         profile.corpus = "\n".join(wiki_bits + chunk_texts)[:500_000]
 
@@ -416,7 +557,7 @@ class ApplicationGraphService:
 
         if use_cache:
             disk = self._load_disk(tenant_id, application_id)
-            if disk:
+            if disk and disk.get("schema_version") == SERVICE_MAP_SCHEMA_VERSION:
                 _CACHE[cache_key] = (time.time(), disk)
                 return {**disk, "cached": True}
 
@@ -442,6 +583,7 @@ class ApplicationGraphService:
         summary = build_summary_sentence(app.name, members, edges)
 
         payload = {
+            "schema_version": SERVICE_MAP_SCHEMA_VERSION,
             "application_id": application_id,
             "application_name": app.name,
             "view_type": VIEW_TYPE,

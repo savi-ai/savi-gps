@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.database import CodeChunk, RepositoryWikiSite, WikiPage
+from app.core.database import ApplicationWikiSite, CodeChunk, RepositoryWikiSite, WikiPage
 from app.services.intelligence.chat_scope import ChatScope
 from app.services.intelligence.embeddings_client import get_embeddings_client
 
@@ -197,12 +197,32 @@ class RetrievalService:
 
     def get_wiki_summary_context_for_scope(self, scope: ChatScope) -> str:
         parts: List[str] = []
+
+        if scope.type == "application" and scope.id:
+            from app.services.intelligence.application_wiki_composer import (
+                format_application_composite_for_chat,
+                load_application_composite_json,
+            )
+
+            composite = load_application_composite_json(scope.tenant_id, scope.id)
+            if composite:
+                parts.append(format_application_composite_for_chat(composite))
+            else:
+                site = (
+                    self.db.query(ApplicationWikiSite)
+                    .filter(ApplicationWikiSite.application_id == scope.id)
+                    .order_by(ApplicationWikiSite.updated_at.desc())
+                    .first()
+                )
+                if site and isinstance(site.summary_json, dict) and site.summary_json.get("members"):
+                    parts.append(format_application_composite_for_chat(site.summary_json))
+
         for repo in scope.resolve_repositories(self.db):
             block = self.get_wiki_summary_context(repo.id)
             if block:
                 name = repo.github_full_name or repo.name
-                parts.append(f"### {name}\n{block}")
-        return "\n\n".join(parts)[:8000]
+                parts.append(f"### Member repo: {name}\n{block}")
+        return "\n\n".join(parts)[:12000]
 
     @staticmethod
     def sources_to_dicts(sources: List[RetrievedSource]) -> List[Dict[str, Any]]:

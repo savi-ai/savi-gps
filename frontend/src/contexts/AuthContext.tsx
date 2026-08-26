@@ -50,7 +50,7 @@ interface AuthContextType {
   register: (username: string, email: string, password: string, fullName: string, role: string, tenantId?: string) => Promise<void>
   logout: () => void
   setTenant: (tenantId: string) => Promise<void>
-  fetchTenants: () => Promise<void>
+  fetchTenants: () => Promise<Tenant[]>
   loading: boolean
   isAuthenticated: boolean
   hasRole: (role: string) => boolean
@@ -60,6 +60,20 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+/** Alpha soft-single-tenant UX slug (W6). Keep `/[tenant]/login` for later multi-tenant. */
+export const DEFAULT_TENANT_SLUG = 'default'
+const LEGACY_TENANT_SLUG = 'tenant1'
+
+const RESERVED_PATH_SEGMENTS = new Set([
+  'login',
+  'dashboard',
+  'api',
+  'wiki',
+  'gps',
+  'tenant-required',
+  't',
+])
 
 const DEFAULT_CAPABILITIES: TenantCapabilities = {
   build: false,
@@ -76,11 +90,26 @@ function mergeTenantCapabilities(
   return { ...DEFAULT_CAPABILITIES, ...(caps ?? {}) }
 }
 
+/** Prefer Alpha `default`, then legacy `tenant1`, then sole active tenant. */
+export function pickDefaultTenant(tenants: Tenant[]): Tenant | null {
+  if (!tenants.length) return null
+  return (
+    tenants.find((t) => t.name === DEFAULT_TENANT_SLUG) ||
+    tenants.find((t) => t.name === LEGACY_TENANT_SLUG) ||
+    (tenants.length === 1 ? tenants[0] : null)
+  )
+}
+
+export function rememberTenantSlug(slug: string) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem('tenant_slug', slug)
+}
+
 // Helper function to extract tenant from URL path
 export function getTenantFromPath(pathname: string): string | null {
-  // Support both /t/[tenant] and /[tenant] patterns
+  // Support both /t/[tenant] and /[tenant] patterns (not /login itself)
   const match = pathname.match(/^\/(?:t\/)?([^\/]+)/)
-  if (match && match[1] && match[1] !== 'login' && match[1] !== 'dashboard' && match[1] !== 'api') {
+  if (match && match[1] && !RESERVED_PATH_SEGMENTS.has(match[1])) {
     return match[1]
   }
   return null
@@ -93,14 +122,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
 
-  const fetchTenants = async () => {
+  const fetchTenants = async (): Promise<Tenant[]> => {
     try {
       const response = await axios.get(`${API_URL}/api/v1/auth/tenants`)
-      setTenants(response.data)
+      const list = Array.isArray(response.data) ? response.data : []
+      setTenants(list)
+      // Soft single-tenant: remember default slug when none stored
+      if (typeof window !== 'undefined' && !localStorage.getItem('tenant_slug')) {
+        const picked = pickDefaultTenant(list)
+        if (picked) rememberTenantSlug(picked.name)
+      }
+      return list
     } catch (error) {
       console.error('Error fetching tenants:', error)
       // Set empty array on error
       setTenants([])
+      return []
     }
   }
   
@@ -153,9 +190,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onAuthLogout = () => {
       logout()
-      const tenantSlug = localStorage.getItem('tenant_slug') || 'default'
       if (typeof window !== 'undefined') {
-        window.location.href = `/${tenantSlug}/login`
+        window.location.href = '/login'
       }
     }
     window.addEventListener(AUTH_LOGOUT_EVENT, onAuthLogout)
@@ -299,13 +335,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('auth_token', access_token)
       localStorage.setItem('auth_user', JSON.stringify(userData))
       
-      // Get tenant slug from URL path first
+      // Resolve tenant slug: URL path → stored → Alpha default
       let tenantSlug: string | null = null
       if (typeof window !== 'undefined') {
-        tenantSlug = getTenantFromPath(window.location.pathname)
-        if (tenantSlug) {
-          localStorage.setItem('tenant_slug', tenantSlug)
-        }
+        tenantSlug =
+          getTenantFromPath(window.location.pathname) ||
+          localStorage.getItem('tenant_slug') ||
+          DEFAULT_TENANT_SLUG
+        rememberTenantSlug(tenantSlug)
       }
       
       // Fetch and set tenant - try multiple approaches
@@ -316,15 +353,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tenant = await fetchTenantById(userData.tenant_id)
         if (tenant) {
           console.log('Tenant fetched by ID:', tenant)
+          rememberTenantSlug(tenant.name)
         }
       }
       
-      // Second try: if no tenant_id in user data, try to fetch by slug from URL
+      // Second try: if no tenant_id in user data, try to fetch by slug
       if (!tenant && tenantSlug) {
         console.log('Fetching tenant by slug:', tenantSlug)
         tenant = await fetchTenantBySlug(tenantSlug)
         if (tenant) {
           console.log('Tenant fetched by slug:', tenant)
+        }
+      }
+
+      // Third try: soft single-tenant pick from list
+      if (!tenant) {
+        await fetchTenants()
+        const response = await axios.get(`${API_URL}/api/v1/auth/tenants`)
+        const list = Array.isArray(response.data) ? response.data : []
+        tenant = pickDefaultTenant(list)
+        if (tenant) {
+          setCurrentTenant(tenant)
+          localStorage.setItem('current_tenant', JSON.stringify(tenant))
+          rememberTenantSlug(tenant.name)
         }
       }
       
@@ -360,30 +411,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (username: string, email: string, password: string, fullName: string, role: string, tenantId?: string) => {
     try {
-      // Get tenant from URL if not provided
+      // Get tenant from URL, stored slug, or Alpha default
       let finalTenantId = tenantId
       if (!finalTenantId && typeof window !== 'undefined') {
-        const tenantFromPath = getTenantFromPath(window.location.pathname)
-        if (tenantFromPath) {
-          // Fetch tenant by slug if not in tenants list yet
-          const tenant = tenants.find(t => t.name === tenantFromPath)
-          if (tenant) {
-            finalTenantId = tenant.id
-          } else {
-            // Try to fetch tenant by slug
-            const fetchedTenant = await fetchTenantBySlug(tenantFromPath)
-            if (fetchedTenant) {
-              finalTenantId = fetchedTenant.id
-            }
-          }
+        const tenantFromPath =
+          getTenantFromPath(window.location.pathname) ||
+          localStorage.getItem('tenant_slug') ||
+          DEFAULT_TENANT_SLUG
+        let tenant = tenants.find((t) => t.name === tenantFromPath)
+        if (!tenant) {
+          tenant = (await fetchTenantBySlug(tenantFromPath)) || undefined
+        }
+        if (!tenant) {
+          const response = await axios.get(`${API_URL}/api/v1/auth/tenants`)
+          const list = Array.isArray(response.data) ? response.data : []
+          tenant = pickDefaultTenant(list) || undefined
+        }
+        if (tenant) {
+          finalTenantId = tenant.id
+          rememberTenantSlug(tenant.name)
         }
       }
       
       if (!finalTenantId) {
-        throw new Error('Tenant is required. Please access the application through a tenant URL (e.g., /tenant1/login)')
+        throw new Error(
+          'Tenant is required. Open /login (Alpha default tenant) or /default/login.'
+        )
       }
       
-      const response = await axios.post(`${API_URL}/api/v1/auth/register`, {
+      await axios.post(`${API_URL}/api/v1/auth/register`, {
         username,
         email,
         password,
