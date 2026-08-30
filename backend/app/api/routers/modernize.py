@@ -8,8 +8,12 @@ from sqlalchemy.orm import Session
 from app.api.deps.modernize_deps import require_modernize
 from app.core.auth import get_current_user
 from app.core.database import User, get_db
+from app.core.logger import logger
 from app.services.intelligence.repo_ingestion_service import RepoIngestionService
 from app.services.modernize.plan_service import PlanService
+from app.services.modernize.execution_service import ExecutionService
+from app.services.modernize.fix_stage_service import FixStageService
+from app.services.modernize.modernize_stage_service import ModernizeStageService
 from app.services.modernize.spawn_build_service import spawn_build_project
 
 router = APIRouter(prefix="/modernize", tags=["Modernize"])
@@ -19,12 +23,16 @@ class CreateApplicationPlansRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     playbook_id: Optional[str] = None
     skip_existing: bool = True
+    # W8.3: default one app-scoped modernize plan; set True for legacy N per-repo plans
+    per_repository: bool = False
 
 
 class CreatePlanRequest(BaseModel):
-    repository_id: str
+    repository_id: Optional[str] = None
+    application_id: Optional[str] = None
     title: Optional[str] = Field(None, max_length=200)
     playbook_id: Optional[str] = None
+    plan_type: str = Field(default="modernize", description="fix | modernize")
 
 
 class UpdatePlanRequest(BaseModel):
@@ -119,18 +127,32 @@ async def create_application_plans(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create modernization plans for each ready repository in an application."""
+    """Create an app-scoped modernize plan (default) or legacy per-repo plans."""
     require_modernize(user, db)
     service = PlanService(db)
     try:
-        return service.create_application_plans(
+        if request.per_repository:
+            return service.create_application_plans(
+                user.tenant_id,
+                user.id,
+                application_id,
+                title=request.title,
+                playbook_id=request.playbook_id,
+                skip_existing=request.skip_existing,
+            )
+        plan = service.create_application_modernize_plan(
             user.tenant_id,
             user.id,
             application_id,
             title=request.title,
             playbook_id=request.playbook_id,
-            skip_existing=request.skip_existing,
         )
+        return {
+            "application_id": application_id,
+            "plan": plan,
+            "plans": [plan],
+            "scope": "application",
+        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -144,13 +166,25 @@ async def create_plan(
     require_modernize(user, db)
     service = PlanService(db)
     try:
-        plan = service.create_plan(
-            user.tenant_id,
-            user.id,
-            request.repository_id,
-            title=request.title,
-            playbook_id=request.playbook_id,
-        )
+        if request.application_id and request.plan_type == "modernize" and not request.repository_id:
+            plan = service.create_application_modernize_plan(
+                user.tenant_id,
+                user.id,
+                request.application_id,
+                title=request.title,
+                playbook_id=request.playbook_id,
+            )
+        else:
+            if not request.repository_id:
+                raise ValueError("repository_id is required for fix plans and repo-scoped modernize plans")
+            plan = service.create_plan(
+                user.tenant_id,
+                user.id,
+                request.repository_id,
+                title=request.title,
+                playbook_id=request.playbook_id,
+                plan_type=request.plan_type,
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return plan
@@ -162,6 +196,7 @@ async def list_plans(
     repository_id: Optional[str] = None,
     application_id: Optional[str] = None,
     bundle_id: Optional[str] = None,
+    plan_type: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -172,6 +207,7 @@ async def list_plans(
         repository_id=repository_id,
         application_id=application_id,
         bundle_id=bundle_id,
+        plan_type=plan_type,
     )
     return {"plans": plans}
 
@@ -187,6 +223,22 @@ async def get_plan(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     return plan
+
+
+@router.delete("/plans/{plan_id}")
+async def delete_plan(
+    plan_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a plan that has not started execution."""
+    require_modernize(user, db)
+    try:
+        return PlanService(db).delete_plan(user.tenant_id, plan_id)
+    except ValueError as e:
+        detail = str(e)
+        status = 404 if detail == "Plan not found" else 400
+        raise HTTPException(status_code=status, detail=detail)
 
 
 @router.patch("/plans/{plan_id}")
@@ -225,15 +277,159 @@ async def refresh_plan_assessment(
     return plan
 
 
+class SpawnBuildRequest(BaseModel):
+    """W5/W8: target git repo for modernization; optional for fix (defaults to source repo)."""
+
+    target_github_url: Optional[str] = Field(
+        None, min_length=8, description="GitHub URL to push/PR into (required for modernize)"
+    )
+    target_branch: str = Field(default="main", description="Base/working branch on the target repo")
+
+
 @router.post("/plans/{plan_id}/spawn-build")
 async def spawn_build(
     plan_id: str,
+    request: SpawnBuildRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     require_modernize(user, db)
     try:
-        result = spawn_build_project(db, user.tenant_id, user.id, plan_id)
+        result = spawn_build_project(
+            db,
+            user.tenant_id,
+            user.id,
+            plan_id,
+            target_github_url=request.target_github_url,
+            target_branch=request.target_branch,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result
+
+
+@router.get("/plans/{plan_id}/execution")
+async def get_plan_execution(
+    plan_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return execution workspace manifest and paths for a plan (W8)."""
+    require_modernize(user, db)
+    from app.core.database import ModernizationPlan
+    from app.services.modernize.execution_service import ExecutionService
+
+    plan = (
+        db.query(ModernizationPlan)
+        .filter(ModernizationPlan.id == plan_id, ModernizationPlan.tenant_id == user.tenant_id)
+        .first()
+    )
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    try:
+        return ExecutionService(db).get_execution_status(user.tenant_id, plan)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/plans/{plan_id}/execution/stages/{stage}/run")
+async def run_execution_stage(
+    plan_id: str,
+    stage: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Enqueue one Copilot-gated stage (returns immediately; poll GET …/execution)."""
+    require_modernize(user, db)
+    from app.core.database import ModernizationPlan
+    from app.services.task_service import TaskService, TaskType
+
+    plan = (
+        db.query(ModernizationPlan)
+        .filter(ModernizationPlan.id == plan_id, ModernizationPlan.tenant_id == user.tenant_id)
+        .first()
+    )
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if not plan.spawned_project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Spawn execution first so stages can run in the background",
+        )
+
+    plan_type = getattr(plan, "plan_type", None) or "modernize"
+    try:
+        if plan_type == "fix":
+            FixStageService(db).prepare_stage(user.tenant_id, plan_id, stage)
+        else:
+            ModernizeStageService(db).prepare_stage(user.tenant_id, plan_id, stage)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    task_service = TaskService(db)
+    task = task_service.create_task(
+        project_id=plan.spawned_project_id,
+        task_type=TaskType.RUN_EXECUTION_STAGE,
+        input_data={
+            "tenant_id": user.tenant_id,
+            "plan_id": plan_id,
+            "stage": stage,
+            "plan_type": plan_type,
+        },
+        user_id=user.id,
+    )
+    logger.info(
+        "Enqueued execution stage %s for plan %s as task %s",
+        stage,
+        plan_id,
+        task.id,
+    )
+    return {
+        "status": "started",
+        "stage": stage,
+        "task_id": task.id,
+        "message": "Stage started in background. Poll execution status until completed or failed.",
+    }
+
+
+class RegisterTargetRequest(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=80)
+    github_url: str = Field(..., min_length=8)
+    branch: str = Field(default="main")
+    clone: bool = True
+
+
+@router.post("/plans/{plan_id}/execution/targets")
+async def register_execution_target(
+    plan_id: str,
+    request: RegisterTargetRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register a new target repo URL for an architecture component (W8.4)."""
+    require_modernize(user, db)
+    try:
+        return ModernizeStageService(db).register_target(
+            user.tenant_id,
+            plan_id,
+            slug=request.slug,
+            github_url=request.github_url,
+            branch=request.branch,
+            clone=request.clone,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/plans/{plan_id}/execution/retry-clone")
+async def retry_execution_clone(
+    plan_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-clone source/ for a fix plan when the initial clone failed."""
+    require_modernize(user, db)
+    try:
+        return FixStageService(db).retry_source_clone(user.tenant_id, plan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

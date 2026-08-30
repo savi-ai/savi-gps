@@ -24,7 +24,9 @@ TRANSITIONS: Dict[str, set] = {
 }
 
 
-def _application_for_repo(db: Session, tenant_id: str, repository_id: str) -> Optional[Dict[str, Any]]:
+def _application_for_repo(db: Session, tenant_id: str, repository_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not repository_id:
+        return None
     row = (
         db.query(Application, ApplicationRepository)
         .join(ApplicationRepository, ApplicationRepository.application_id == Application.id)
@@ -38,6 +40,34 @@ def _application_for_repo(db: Session, tenant_id: str, repository_id: str) -> Op
         return None
     app, membership = row
     return {"id": app.id, "name": app.name, "role": membership.role}
+
+
+def _application_dict(db: Session, tenant_id: str, application_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not application_id:
+        return None
+    app = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.tenant_id == tenant_id)
+        .first()
+    )
+    if not app:
+        return None
+    return {"id": app.id, "name": app.name, "role": None}
+
+
+def _resolve_plan_application(
+    db: Session, tenant_id: str, plan: ModernizationPlan
+) -> Optional[Dict[str, Any]]:
+    if plan.source_application_id:
+        return _application_dict(db, tenant_id, plan.source_application_id)
+    return _application_for_repo(db, tenant_id, plan.repository_id)
+
+
+def _plan_deletable(plan: ModernizationPlan) -> bool:
+    """Plans may be deleted only before execution has started."""
+    if getattr(plan, "spawned_project_id", None):
+        return False
+    return (plan.state or "") in ("assessing", "planned", "cancelled")
 
 
 def _plan_to_dict(
@@ -59,16 +89,34 @@ def _plan_to_dict(
         "spawned_project_id": plan.spawned_project_id,
         "source_application_id": plan.source_application_id,
         "plan_bundle_id": plan.plan_bundle_id,
+        "plan_type": getattr(plan, "plan_type", None) or "modernize",
+        "assessment_run_id": getattr(plan, "assessment_run_id", None),
         "created_by": plan.created_by,
         "created_at": plan.created_at.isoformat() if plan.created_at else None,
         "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
+        "can_delete": _plan_deletable(plan),
     }
     if application is not None:
         data["application"] = application
     return data
 
 
-def _default_plan_md(title: str, readiness: Dict[str, Any], playbook: Optional[ModernizationPlaybook]) -> str:
+def _default_plan_md(
+    title: str,
+    readiness: Dict[str, Any],
+    playbook: Optional[ModernizationPlaybook],
+    *,
+    plan_type: str = "modernize",
+) -> str:
+    if plan_type == "fix":
+        from app.services.modernize.fix_plan_builder import (
+            assessment_to_findings,
+            render_fix_plan_md,
+        )
+
+        findings = assessment_to_findings(readiness)
+        return render_fix_plan_md(title, findings, assessment=readiness)
+
     lines = [f"# {title}", ""]
     overview = readiness.get("overview") or {}
     if overview.get("description"):
@@ -146,7 +194,9 @@ class PlanService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _get_repo(self, tenant_id: str, repository_id: str) -> Optional[Repository]:
+    def _get_repo(self, tenant_id: str, repository_id: Optional[str]) -> Optional[Repository]:
+        if not repository_id:
+            return None
         return (
             self.db.query(Repository)
             .filter(Repository.id == repository_id, Repository.tenant_id == tenant_id)
@@ -188,7 +238,12 @@ class PlanService:
         repository_id: str,
         title: Optional[str] = None,
         playbook_id: Optional[str] = None,
+        *,
+        plan_type: str = "modernize",
     ) -> Dict[str, Any]:
+        if plan_type not in ("fix", "modernize"):
+            raise ValueError("plan_type must be 'fix' or 'modernize'")
+
         repo = self._get_repo(tenant_id, repository_id)
         if not repo:
             raise ValueError("Repository not found")
@@ -210,7 +265,28 @@ class PlanService:
                 raise ValueError("Playbook not found")
 
         readiness = AssessmentService(self.db).run_repo_assessment(repo, trigger="plan_create")
-        plan_title = title or f"Modernize {repo.name}"
+        assessment_run_id = readiness.get("assessed_at")
+
+        if plan_type == "fix" and assessment_run_id:
+            existing_fix = (
+                self.db.query(ModernizationPlan)
+                .filter(
+                    ModernizationPlan.tenant_id == tenant_id,
+                    ModernizationPlan.repository_id == repository_id,
+                    ModernizationPlan.plan_type == "fix",
+                    ModernizationPlan.assessment_run_id == assessment_run_id,
+                )
+                .first()
+            )
+            if existing_fix:
+                raise ValueError(
+                    "A fix plan already exists for this repository and assessment run"
+                )
+
+        if plan_type == "fix":
+            plan_title = title or f"Fix {repo.name}"
+        else:
+            plan_title = title or f"Modernize {repo.name}"
 
         plan = ModernizationPlan(
             id=str(uuid.uuid4()),
@@ -220,13 +296,91 @@ class PlanService:
             state="assessing",
             playbook_id=playbook_id,
             assessment_json=readiness,
-            plan_md=_default_plan_md(plan_title, readiness, playbook),
+            plan_md=_default_plan_md(plan_title, readiness, playbook, plan_type=plan_type),
+            plan_type=plan_type,
+            assessment_run_id=assessment_run_id,
             created_by=user_id,
         )
         self.db.add(plan)
         self.db.commit()
         self.db.refresh(plan)
         return _plan_to_dict(plan, repo)
+
+    def create_application_modernize_plan(
+        self,
+        tenant_id: str,
+        user_id: str,
+        application_id: str,
+        *,
+        title: Optional[str] = None,
+        playbook_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """W8.3: one app-scoped modernize plan (repository_id=NULL)."""
+        app_svc = ApplicationService(self.db)
+        app = app_svc.get_application(tenant_id, application_id)
+        if not app:
+            raise ValueError("Application not found")
+
+        playbook = None
+        if playbook_id:
+            playbook = (
+                self.db.query(ModernizationPlaybook)
+                .filter(
+                    ModernizationPlaybook.id == playbook_id,
+                    (ModernizationPlaybook.tenant_id == tenant_id)
+                    | (ModernizationPlaybook.is_system == True),  # noqa: E712
+                )
+                .first()
+            )
+            if not playbook:
+                raise ValueError("Playbook not found")
+
+        readiness = AssessmentService(self.db).run_application_assessment(
+            tenant_id, application_id, trigger="plan_create"
+        )
+        assessment_run_id = readiness.get("assessed_at")
+
+        existing = (
+            self.db.query(ModernizationPlan)
+            .filter(
+                ModernizationPlan.tenant_id == tenant_id,
+                ModernizationPlan.source_application_id == application_id,
+                ModernizationPlan.plan_type == "modernize",
+                ModernizationPlan.repository_id.is_(None),
+                ModernizationPlan.state.in_(
+                    ("assessing", "planned", "executing", "verifying")
+                ),
+            )
+            .first()
+        )
+        if existing:
+            raise ValueError(
+                "An active application modernization plan already exists for this application"
+            )
+
+        plan_title = title or f"Modernize {app.name}"
+        plan = ModernizationPlan(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
+            repository_id=None,
+            title=plan_title,
+            state="assessing",
+            playbook_id=playbook_id,
+            assessment_json=readiness,
+            plan_md=_default_plan_md(plan_title, readiness, playbook),
+            source_application_id=application_id,
+            plan_type="modernize",
+            assessment_run_id=assessment_run_id,
+            created_by=user_id,
+        )
+        self.db.add(plan)
+        self.db.commit()
+        self.db.refresh(plan)
+        return _plan_to_dict(
+            plan,
+            None,
+            application={"id": app.id, "name": app.name, "role": None},
+        )
 
     def create_application_plans(
         self,
@@ -317,6 +471,8 @@ class PlanService:
                 plan_md=_default_plan_md(plan_title, readiness, playbook),
                 source_application_id=application_id,
                 plan_bundle_id=bundle_id,
+                plan_type="modernize",
+                assessment_run_id=readiness.get("assessed_at"),
                 created_by=user_id,
             )
             self.db.add(plan)
@@ -373,10 +529,12 @@ class PlanService:
         repository_id: Optional[str] = None,
         application_id: Optional[str] = None,
         bundle_id: Optional[str] = None,
+        plan_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        query = self.db.query(ModernizationPlan, Repository).join(
-            Repository, ModernizationPlan.repository_id == Repository.id
-        ).filter(ModernizationPlan.tenant_id == tenant_id)
+        query = (
+            self.db.query(ModernizationPlan)
+            .filter(ModernizationPlan.tenant_id == tenant_id)
+        )
 
         if state:
             query = query.filter(ModernizationPlan.state == state)
@@ -386,32 +544,47 @@ class PlanService:
             query = query.filter(ModernizationPlan.source_application_id == application_id)
         if bundle_id:
             query = query.filter(ModernizationPlan.plan_bundle_id == bundle_id)
+        if plan_type in ("fix", "modernize"):
+            query = query.filter(ModernizationPlan.plan_type == plan_type)
 
         rows = query.order_by(ModernizationPlan.updated_at.desc()).all()
-        return [
-            _plan_to_dict(
-                plan,
-                repo,
-                application=_application_for_repo(self.db, tenant_id, plan.repository_id),
+        out: List[Dict[str, Any]] = []
+        for plan in rows:
+            repo = self._get_repo(tenant_id, plan.repository_id) if plan.repository_id else None
+            out.append(
+                _plan_to_dict(
+                    plan,
+                    repo,
+                    application=_resolve_plan_application(self.db, tenant_id, plan),
+                )
             )
-            for plan, repo in rows
-        ]
+        return out
 
     def get_plan(self, tenant_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
-        row = (
-            self.db.query(ModernizationPlan, Repository)
-            .join(Repository, ModernizationPlan.repository_id == Repository.id)
-            .filter(ModernizationPlan.id == plan_id, ModernizationPlan.tenant_id == tenant_id)
-            .first()
-        )
-        if not row:
+        plan = self._get_plan(tenant_id, plan_id)
+        if not plan:
             return None
-        plan, repo = row
+        repo = self._get_repo(tenant_id, plan.repository_id) if plan.repository_id else None
         return _plan_to_dict(
             plan,
             repo,
-            application=_application_for_repo(self.db, tenant_id, plan.repository_id),
+            application=_resolve_plan_application(self.db, tenant_id, plan),
         )
+
+    def delete_plan(self, tenant_id: str, plan_id: str) -> Dict[str, Any]:
+        """Delete a plan that has not been executed (no spawn / execution project)."""
+        plan = self._get_plan(tenant_id, plan_id)
+        if not plan:
+            raise ValueError("Plan not found")
+        if not _plan_deletable(plan):
+            raise ValueError(
+                "Only plans that have not started execution can be deleted "
+                "(no linked project; state assessing, planned, or cancelled)"
+            )
+        title = plan.title
+        self.db.delete(plan)
+        self.db.commit()
+        return {"deleted": True, "id": plan_id, "title": title}
 
     def update_plan(
         self,
@@ -445,20 +618,44 @@ class PlanService:
         plan.updated_at = datetime.now()
         self.db.commit()
         self.db.refresh(plan)
-        repo = self._get_repo(tenant_id, plan.repository_id)
-        return _plan_to_dict(plan, repo)
+        repo = self._get_repo(tenant_id, plan.repository_id) if plan.repository_id else None
+        return _plan_to_dict(
+            plan,
+            repo,
+            application=_resolve_plan_application(self.db, tenant_id, plan),
+        )
 
     def refresh_assessment(self, tenant_id: str, plan_id: str) -> Dict[str, Any]:
         plan = self._get_plan(tenant_id, plan_id)
         if not plan:
             raise ValueError("Plan not found")
-        repo = self._get_repo(tenant_id, plan.repository_id)
+
+        if plan.source_application_id and not plan.repository_id:
+            plan.assessment_json = AssessmentService(self.db).run_application_assessment(
+                tenant_id, plan.source_application_id, trigger="plan_refresh"
+            )
+            plan.assessment_run_id = (plan.assessment_json or {}).get("assessed_at")
+            plan.updated_at = datetime.now()
+            self.db.commit()
+            self.db.refresh(plan)
+            return _plan_to_dict(
+                plan,
+                None,
+                application=_resolve_plan_application(self.db, tenant_id, plan),
+            )
+
+        repo = self._get_repo(tenant_id, plan.repository_id) if plan.repository_id else None
         if not repo:
             raise ValueError("Repository not found")
         plan.assessment_json = AssessmentService(self.db).run_repo_assessment(
             repo, trigger="plan_refresh"
         )
+        plan.assessment_run_id = (plan.assessment_json or {}).get("assessed_at")
         plan.updated_at = datetime.now()
         self.db.commit()
         self.db.refresh(plan)
-        return _plan_to_dict(plan, repo)
+        return _plan_to_dict(
+            plan,
+            repo,
+            application=_resolve_plan_application(self.db, tenant_id, plan),
+        )

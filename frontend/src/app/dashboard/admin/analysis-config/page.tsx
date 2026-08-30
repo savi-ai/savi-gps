@@ -23,6 +23,7 @@ interface AttributeDefinition {
   use_in_assessment?: boolean
   assessment_weight?: number
   recommendation_template?: string | null
+  remediation_scope?: 'simple_fix' | 'modernization' | 'either' | string
 }
 
 interface SearchResult {
@@ -116,6 +117,7 @@ export default function AdminAnalysisConfigPage() {
         use_in_assessment: d.use_in_assessment,
         assessment_weight: d.assessment_weight ?? 1,
         recommendation_template: d.recommendation_template || null,
+        remediation_scope: d.remediation_scope || 'either',
       })
       setMessage(`Saved ${d.key}.`)
       await loadDefinitions()
@@ -141,7 +143,8 @@ export default function AdminAnalysisConfigPage() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Define attributes extracted from code during indexing. Toggle{' '}
-          <strong>Use in assessment</strong> so modernization readiness scores use them as signals.
+          <strong>Use in assessment</strong> and set <strong>Remediation scope</strong> so readiness
+          can recommend a fix plan vs a modernize plan.
         </p>
       </div>
 
@@ -181,6 +184,15 @@ export default function AdminAnalysisConfigPage() {
                       <Badge variant="outline">{d.category}</Badge>
                       {d.use_in_assessment && (
                         <Badge className="bg-amber-600 hover:bg-amber-600">Assessment</Badge>
+                      )}
+                      {d.use_in_assessment && d.remediation_scope && (
+                        <Badge variant="outline" className="capitalize text-[10px]">
+                          {d.remediation_scope === 'simple_fix'
+                            ? 'Fix'
+                            : d.remediation_scope === 'modernization'
+                              ? 'Modernize'
+                              : 'Either'}
+                        </Badge>
                       )}
                       {!d.is_active && <Badge variant="secondary">inactive</Badge>}
                     </div>
@@ -242,6 +254,21 @@ export default function AdminAnalysisConfigPage() {
                             })
                           }
                         />
+                      </div>
+                      <div>
+                        <Label>Remediation scope</Label>
+                        <select
+                          className="mt-1 flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={d.remediation_scope || 'either'}
+                          onChange={(e) =>
+                            updateLocal(d.id, { remediation_scope: e.target.value })
+                          }
+                          disabled={!d.use_in_assessment}
+                        >
+                          <option value="simple_fix">Simple fix (same-repo PR)</option>
+                          <option value="modernization">Modernization theme</option>
+                          <option value="either">Either</option>
+                        </select>
                       </div>
                       <div className="sm:col-span-2">
                         <Label>Recommendation when warn/bad</Label>

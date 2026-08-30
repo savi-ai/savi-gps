@@ -25,6 +25,10 @@ class CreateAttributeRequest(BaseModel):
     assessment_weight: int = Field(default=1, ge=1, le=5)
     assessment_rules: Optional[dict] = None
     recommendation_template: Optional[str] = Field(None, max_length=2000)
+    remediation_scope: Optional[str] = Field(
+        default="either",
+        pattern=r"^(simple_fix|modernization|either)$",
+    )
 
 
 class UpdateAttributeRequest(BaseModel):
@@ -39,6 +43,10 @@ class UpdateAttributeRequest(BaseModel):
     assessment_weight: Optional[int] = Field(None, ge=1, le=5)
     assessment_rules: Optional[dict] = None
     recommendation_template: Optional[str] = Field(None, max_length=2000)
+    remediation_scope: Optional[str] = Field(
+        None,
+        pattern=r"^(simple_fix|modernization|either)$",
+    )
 
 
 def _require_admin_config(user: User, db: Session) -> None:
@@ -80,6 +88,7 @@ async def create_definition(
             assessment_weight=request.assessment_weight,
             assessment_rules=request.assessment_rules,
             recommendation_template=request.recommendation_template,
+            remediation_scope=request.remediation_scope,
             created_by=user.id,
         )
         return defn

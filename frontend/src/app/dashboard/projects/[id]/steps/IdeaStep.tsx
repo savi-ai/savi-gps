@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import apiClient from '@/lib/axios'
 import type { Project, StepContentProps } from '../types'
 import { CheckCircle2, Lightbulb } from 'lucide-react'
+import { ChatMarkdownContent } from '@/components/chat/ChatMarkdownContent'
 
 export function IdeaStepContent({ project, canEdit, onUpdate, onStepChange }: StepContentProps & { onStepChange: (step: string) => void }) {
   const { user } = useAuth()
@@ -158,7 +159,7 @@ export function IdeaStepContent({ project, canEdit, onUpdate, onStepChange }: St
                         {user?.full_name?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || 'U'}
                       </div>
                       <div className="chat-bubble">
-                        {msg.content}
+                        <p className="chat-plain-text">{msg.content}</p>
                       </div>
                     </>
                   ) : (
@@ -174,7 +175,7 @@ export function IdeaStepContent({ project, canEdit, onUpdate, onStepChange }: St
                             <span></span>
                           </div>
                         ) : (
-                          msg.content
+                          <ChatMarkdownContent content={msg.content} />
                         )}
                       </div>
                     </>

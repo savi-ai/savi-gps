@@ -10,9 +10,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, ExternalLink, Loader2, Rocket, Save } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ArrowLeft, ExternalLink, Loader2, Rocket, Save, Trash2 } from 'lucide-react'
 import ReadinessPanel, { type ReadinessData } from '@/components/modernize/ReadinessPanel'
 import AgentEffortCard from '@/components/modernize/AgentEffortCard'
+import ExecutionPanel from '@/components/modernize/ExecutionPanel'
 
 import PillarBreadcrumb from '@/components/navigation/PillarBreadcrumb'
 
@@ -20,14 +31,17 @@ interface Plan {
   id: string
   title: string
   state: string
-  repository_id: string
+  repository_id?: string | null
   repository_name?: string
   plan_md?: string
+  plan_type?: string
+  assessment_run_id?: string | null
   assessment_json?: ReadinessData
   spawned_project_id?: string | null
   application?: { id: string; name: string; role?: string | null } | null
   source_application_id?: string | null
   plan_bundle_id?: string | null
+  can_delete?: boolean
 }
 
 const STATE_FLOW = ['assessing', 'planned', 'executing', 'verifying', 'complete']
@@ -42,6 +56,11 @@ export default function ModernizePlanDetailPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [spawning, setSpawning] = useState(false)
+  const [spawnOpen, setSpawnOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [targetUrl, setTargetUrl] = useState('')
+  const [targetBranch, setTargetBranch] = useState('main')
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -88,18 +107,71 @@ export default function ModernizePlanDetailPage() {
     }
   }
 
-  const spawnBuild = async () => {
-    setSpawning(true)
+  const canStartModernization =
+    plan?.state === 'planned' &&
+    !plan.spawned_project_id &&
+    (hasCapability('build') || hasCapability('modernize'))
+
+  const isFixPlan = (plan?.plan_type || 'modernize') === 'fix'
+  const canDelete =
+    Boolean(plan?.can_delete) ||
+    Boolean(
+      plan &&
+        !plan.spawned_project_id &&
+        ['assessing', 'planned', 'cancelled'].includes(plan.state)
+    )
+
+  const deletePlan = async () => {
+    setDeleting(true)
     setError(null)
     try {
-      const res = await apiClient.post(`/api/v1/modernize/plans/${planId}/spawn-build`)
-      router.push(`/dashboard/projects/${res.data.project.id}?spawned=1&from_plan=${planId}`)
+      await apiClient.delete(`/api/v1/modernize/plans/${planId}`)
+      setDeleteOpen(false)
+      router.push('/dashboard/modernize/plans')
     } catch (err: unknown) {
       const detail =
         err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : null
-      setError(detail || 'Failed to spawn Build project')
+      setError(detail || 'Failed to delete plan')
+      setDeleteOpen(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const spawnBuild = async () => {
+    setSpawning(true)
+    setError(null)
+    try {
+      const payload: { target_github_url?: string; target_branch: string } = {
+        target_branch: targetBranch.trim() || 'main',
+      }
+      if (!isFixPlan && targetUrl.trim()) {
+        payload.target_github_url = targetUrl.trim()
+      }
+      if (isFixPlan) {
+        // fix: omit URL — backend defaults to source repo
+      } else if (!targetUrl.trim()) {
+        // modernize: architecture defines targets; optional seed URL
+      }
+      const res = await apiClient.post(`/api/v1/modernize/plans/${planId}/spawn-build`, {
+        ...payload,
+        target_github_url: isFixPlan ? undefined : targetUrl.trim() || undefined,
+      })
+      setSpawnOpen(false)
+      // Stay on plan page so execution panel is available for both tracks
+      await load()
+      setSpawning(false)
+      if (!isFixPlan && res.data?.project?.id) {
+        // optional: user can still open project from badge
+      }
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(detail || 'Failed to start modernization')
       setSpawning(false)
     }
   }
@@ -134,23 +206,32 @@ export default function ModernizePlanDetailPage() {
         ]}
       />
 
-      {plan.application && (
+      {(plan.application || plan.source_application_id) && (
         <Card className="border-l-4 border-violet-500 bg-muted/20">
           <CardContent className="flex flex-wrap items-center gap-2 py-3 text-sm">
             <span className="text-muted-foreground">Lineage:</span>
             <Link
-              href={`/dashboard/intelligence/applications/${plan.application.id}`}
+              href={`/dashboard/intelligence/applications/${plan.application?.id || plan.source_application_id}`}
               className="font-medium text-primary hover:underline"
             >
-              {plan.application.name}
+              {plan.application?.name || 'Application'}
             </Link>
-            <span className="text-muted-foreground">→</span>
-            <Link
-              href={`/dashboard/intelligence/repositories/${plan.repository_id}`}
-              className="font-medium text-primary hover:underline"
-            >
-              {plan.repository_name || 'Repository'}
-            </Link>
+            {plan.repository_id && (
+              <>
+                <span className="text-muted-foreground">→</span>
+                <Link
+                  href={`/dashboard/intelligence/repositories/${plan.repository_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {plan.repository_name || 'Repository'}
+                </Link>
+              </>
+            )}
+            {!plan.repository_id && (
+              <Badge variant="outline" className="text-xs">
+                app-scoped
+              </Badge>
+            )}
             {plan.spawned_project_id && (
               <>
                 <span className="text-muted-foreground">→</span>
@@ -158,7 +239,7 @@ export default function ModernizePlanDetailPage() {
                   href={`/dashboard/projects/${plan.spawned_project_id}`}
                   className="font-medium text-primary hover:underline"
                 >
-                  Build project
+                  Modernization project
                 </Link>
               </>
             )}
@@ -188,43 +269,72 @@ export default function ModernizePlanDetailPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{plan.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Repository:{' '}
-            <Link
-              href={`/dashboard/intelligence/repositories/${plan.repository_id}`}
-              className="font-medium text-primary hover:underline"
-            >
-              {plan.repository_name || plan.repository_id}
-            </Link>
+            {plan.repository_id ? (
+              <>
+                Repository:{' '}
+                <Link
+                  href={`/dashboard/intelligence/repositories/${plan.repository_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {plan.repository_name || plan.repository_id}
+                </Link>
+              </>
+            ) : plan.application || plan.source_application_id ? (
+              <>
+                Application:{' '}
+                <Link
+                  href={`/dashboard/intelligence/applications/${plan.application?.id || plan.source_application_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {plan.application?.name || plan.source_application_id}
+                </Link>
+                <span className="ml-2 text-xs">(app-scoped — no member repo target)</span>
+              </>
+            ) : (
+              'No repository linked'
+            )}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline" className="capitalize">{plan.state}</Badge>
+            <Badge variant="outline" className="capitalize">
+              {plan.state}
+            </Badge>
+            <Badge variant={isFixPlan ? 'default' : 'secondary'} className="capitalize">
+              {plan.plan_type || 'modernize'}
+            </Badge>
             {plan.spawned_project_id && (
-              <Badge variant="secondary">Build project linked</Badge>
+              <Badge variant="secondary">Execution project linked</Badge>
             )}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           {plan.state === 'assessing' && (
-            <Button
-              size="sm"
-              onClick={() => savePlan({ state: 'planned' })}
-              disabled={saving}
-            >
+            <Button size="sm" onClick={() => savePlan({ state: 'planned' })} disabled={saving}>
               Mark as planned
             </Button>
           )}
-          {plan.state === 'planned' && !plan.spawned_project_id && hasCapability('build') && (
-            <Button size="sm" onClick={spawnBuild} disabled={spawning}>
+          {canStartModernization && (
+            <Button size="sm" onClick={() => setSpawnOpen(true)} disabled={spawning}>
               {spawning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-              Spawn Build project
+              {isFixPlan ? 'Start fix execution' : 'Start modernization'}
             </Button>
           )}
-          {plan.spawned_project_id && hasCapability('build') && (
+          {plan.spawned_project_id && (
             <Button size="sm" variant="outline" asChild>
               <Link href={`/dashboard/projects/${plan.spawned_project_id}`}>
                 <ExternalLink className="h-4 w-4" />
-                Open Build project
+                Open project
               </Link>
+            </Button>
+          )}
+          {canDelete && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete
             </Button>
           )}
         </div>
@@ -238,8 +348,12 @@ export default function ModernizePlanDetailPage() {
 
       <div className="flex flex-wrap gap-1 text-xs text-muted-foreground">
         {STATE_FLOW.map((s, i) => (
-          <span key={s} className={i <= stateIndex ? 'font-medium text-foreground capitalize' : 'capitalize'}>
-            {s}{i < STATE_FLOW.length - 1 ? ' → ' : ''}
+          <span
+            key={s}
+            className={i <= stateIndex ? 'font-medium text-foreground capitalize' : 'capitalize'}
+          >
+            {s}
+            {i < STATE_FLOW.length - 1 ? ' → ' : ''}
           </span>
         ))}
       </div>
@@ -251,11 +365,22 @@ export default function ModernizePlanDetailPage() {
         />
       )}
 
+      {(plan.spawned_project_id || plan.state === 'executing') && (
+        <ExecutionPanel
+          planId={plan.id}
+          planType={plan.plan_type || 'modernize'}
+          spawnedProjectId={plan.spawned_project_id}
+          canManage
+        />
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-base">Plan document</CardTitle>
-            <CardDescription>Goals, checklist, and migration notes — editable while assessing or planned</CardDescription>
+            <CardDescription>
+              Goals, checklist, and migration notes — editable while assessing or planned
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
@@ -275,13 +400,107 @@ export default function ModernizePlanDetailPage() {
         </Card>
 
         <div className="lg:col-span-2">
-          <ReadinessPanel
-            repoId={plan.repository_id}
-            repoStatus="ready"
-            canManage={false}
-          />
+          {plan.repository_id ? (
+            <ReadinessPanel repoId={plan.repository_id} repoStatus="ready" canManage={false} />
+          ) : plan.source_application_id || plan.application?.id ? (
+            <p className="text-sm text-muted-foreground">
+              App-scoped plan — assessment is on the application. Open{' '}
+              <Link
+                href={`/dashboard/intelligence/applications/${plan.application?.id || plan.source_application_id}`}
+                className="text-primary hover:underline"
+              >
+                {plan.application?.name || 'application'}
+              </Link>{' '}
+              for member readiness.
+            </p>
+          ) : null}
         </div>
       </div>
+
+      <Dialog open={spawnOpen} onOpenChange={setSpawnOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{isFixPlan ? 'Start fix execution' : 'Start modernization'}</DialogTitle>
+            <DialogDescription>
+              {isFixPlan ? (
+                <>
+                  Initializes the execution workspace and clones the member repo into{' '}
+                  <code className="text-xs">source/</code>. Run Fix → Code → Test → Push → PR from
+                  the execution panel (same repo, Copilot gates).
+                </>
+              ) : (
+                <>
+                  Initializes the app execution workspace under{' '}
+                  <code className="text-xs">applications/…/executions/</code>. Architecture defines
+                  components → <code className="text-xs">targets/{'{component}'}/</code>. Optional:
+                  seed one GitHub URL now, or register remotes after Architecture. Stages:
+                  Requirements → Tasks → Architecture → Code → Test → Push.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {!isFixPlan && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="target-url">Seed target GitHub URL (optional)</Label>
+                  <Input
+                    id="target-url"
+                    placeholder="https://github.com/org/new-api (optional)"
+                    value={targetUrl}
+                    onChange={(e) => setTargetUrl(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="target-branch">Base branch</Label>
+                  <Input
+                    id="target-branch"
+                    placeholder="main"
+                    value={targetBranch}
+                    onChange={(e) => setTargetBranch(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+            {isFixPlan && (
+              <p className="text-sm text-muted-foreground">
+                Push target: same repository ({plan.repository_name || plan.repository_id}).
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSpawnOpen(false)} disabled={spawning}>
+              Cancel
+            </Button>
+            <Button onClick={() => void spawnBuild()} disabled={spawning}>
+              {spawning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+              {isFixPlan ? 'Initialize workspace' : 'Initialize workspace'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete plan?</DialogTitle>
+            <DialogDescription>
+              Permanently remove <strong>{plan.title}</strong>. Only plans that have not started
+              execution can be deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void deletePlan()} disabled={deleting}>
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete plan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

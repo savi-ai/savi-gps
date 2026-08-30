@@ -8,13 +8,21 @@ from sqlalchemy.orm import Session
 from app.core.database import Application, ApplicationRepository, Repository
 from app.services.modernize.readiness_scorer import compute_readiness
 
-_LEVEL_RANK = {"high": 3, "medium": 2, "low": 1}
+_LEVEL_RANK = {"high": 3, "medium": 2, "low": 1, "ready": 3, "partial": 2, "blocked": 1}
 
 
 def _worst_level(levels: List[str]) -> str:
     if not levels:
         return "low"
     return min(levels, key=lambda lv: _LEVEL_RANK.get(lv, 0))
+
+
+def _scorable_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        s
+        for s in signals
+        if s.get("applicable", True) and s.get("status") != "na" and s.get("score") is not None
+    ]
 
 
 def compute_application_readiness(
@@ -39,6 +47,7 @@ def compute_application_readiness(
     )
 
     repo_rows: List[Dict[str, Any]] = []
+    signal_groups: List[Dict[str, Any]] = []
     all_signals: Dict[str, Dict[str, Any]] = {}
     scores: List[int] = []
     levels: List[str] = []
@@ -70,11 +79,28 @@ def compute_application_readiness(
         levels.append(level)
         scores.append(score)
 
-        for sig in rd.get("signals") or []:
+        repo_signals = rd.get("signals") or []
+        scorable = _scorable_signals(repo_signals)
+        signal_groups.append({
+            "repository_id": repo.id,
+            "repository_name": repo.github_full_name or repo.name,
+            "role": membership.role,
+            "signals": repo_signals,
+            "scorable_count": len(scorable),
+            "gap_count": sum(1 for s in scorable if s.get("status") in ("bad", "warn")),
+        })
+
+        for sig in scorable:
             sid = sig.get("id") or sig.get("label")
-            existing = all_signals.get(sid)
+            composite = f"{sid}:{repo.id}"
+            enriched = {
+                **sig,
+                "repository_id": repo.id,
+                "repository_name": repo.name,
+            }
+            existing = all_signals.get(composite)
             if not existing or sig.get("score", 100) < existing.get("score", 100):
-                all_signals[sid] = {**sig, "repository_id": repo.id, "repository_name": repo.name}
+                all_signals[composite] = enriched
 
         for gap in rd.get("policy_gaps") or []:
             all_gaps.append({**gap, "repository_id": repo.id, "repository_name": repo.name})
@@ -96,12 +122,20 @@ def compute_application_readiness(
             "overall_score": score,
             "readiness_level": level,
             "status": repo.status,
-            "signals": rd.get("signals") or [],
+            "signals": repo_signals,
             "policy_gaps": rd.get("policy_gaps") or [],
         })
 
     aggregate_score = round(sum(scores) / len(scores)) if scores else 0
     aggregate_level = _worst_level([lv for lv in levels if lv])
+
+    summary_signals = sorted(
+        all_signals.values(),
+        key=lambda s: (
+            0 if s.get("status") == "bad" else 1 if s.get("status") == "warn" else 2,
+            int(s.get("score") or 100),
+        ),
+    )
 
     return {
         "application_id": app.id,
@@ -110,7 +144,8 @@ def compute_application_readiness(
         "repositories_ready": sum(1 for r in repo_rows if r.get("indexed")),
         "overall_score": aggregate_score,
         "readiness_level": aggregate_level,
-        "signals": list(all_signals.values()),
+        "signals": summary_signals,
+        "signal_groups": signal_groups,
         "repositories": repo_rows,
         "policy_version_ids": version_ids,
         "policies_applied": policies_applied,

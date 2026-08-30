@@ -11,6 +11,16 @@ from sqlalchemy.orm import Session
 from app.core.database import AnalysisAttributeDefinition, Repository, RepositoryAnalysisAttribute
 from app.core.logger import logger
 
+VALID_REMEDIATION_SCOPES = frozenset({"simple_fix", "modernization", "either"})
+
+
+def normalize_remediation_scope(value: Optional[str], *, default: str = "either") -> str:
+    scope = (value or default).strip().lower()
+    if scope not in VALID_REMEDIATION_SCOPES:
+        return default
+    return scope
+
+
 # Seed definitions: extraction for wiki + optional modernization assessment signals.
 DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
     {
@@ -21,6 +31,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Extract from pom.xml <java.version> or maven.compiler.source",
         "use_in_assessment": True,
         "assessment_weight": 3,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": ["1.8", "java 8", "java8", "jdk8"],
             "warn_contains": ["11", "java 11"],
@@ -30,6 +41,10 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "recommendation_template": (
             "Plan a JDK upgrade path; Java 8/11 increase modernization risk and agent effort."
         ),
+        "applies_when": {
+            "any_file": ["pom.xml", "build.gradle", "build.gradle.kts"],
+            "any_stack": ["java", "spring", "kotlin", "maven", "gradle"],
+        },
     },
     {
         "key": "node_version",
@@ -39,6 +54,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Extract from package.json engines.node",
         "use_in_assessment": True,
         "assessment_weight": 2,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": ["10", "12", "14"],
             "warn_contains": ["16"],
@@ -46,6 +62,10 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
             "missing_score": 40,
         },
         "recommendation_template": "Upgrade Node to an Active LTS release before large refactors.",
+        "applies_when": {
+            "any_file": ["package.json"],
+            "any_stack": ["node", "javascript", "typescript", "next.js", "react", "vue"],
+        },
     },
     {
         "key": "python_version",
@@ -55,6 +75,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Extract from pyproject.toml or .python-version",
         "use_in_assessment": True,
         "assessment_weight": 2,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": ["2.7", "3.6", "3.7", "3.8"],
             "warn_contains": ["3.9"],
@@ -62,6 +83,10 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
             "missing_score": 40,
         },
         "recommendation_template": "Move to a supported Python 3.10+ runtime for library and security support.",
+        "applies_when": {
+            "any_file": ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile", ".python-version"],
+            "any_stack": ["python", "django", "fastapi", "flask"],
+        },
     },
     {
         "key": "framework",
@@ -71,6 +96,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "e.g. FastAPI, Spring Boot, Next.js from dependencies",
         "use_in_assessment": True,
         "assessment_weight": 3,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": [
                 "spring boot 1",
@@ -96,6 +122,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Extract from pom.xml spring-boot-starter-parent or gradle",
         "use_in_assessment": True,
         "assessment_weight": 3,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": ["1.", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5"],
             "warn_contains": ["2.6", "2.7"],
@@ -103,6 +130,10 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
             "missing_score": 50,
         },
         "recommendation_template": "Spring Boot 2.x → 3.x is a common modernization track; estimate agent Code/Test stages accordingly.",
+        "applies_when": {
+            "any_file": ["pom.xml", "build.gradle", "build.gradle.kts"],
+            "any_stack": ["spring", "java", "spring boot"],
+        },
     },
     {
         "key": "golden_image",
@@ -112,6 +143,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Extract FROM line in Dockerfile",
         "use_in_assessment": True,
         "assessment_weight": 2,
+        "remediation_scope": "either",
         "assessment_rules": {
             "legacy_contains": ["jdk8", "java:8", "openjdk:8", "node:12", "node:14", "centos:7"],
             "warn_contains": ["jdk11", "openjdk:11", "node:16"],
@@ -128,6 +160,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "First FROM instruction in Dockerfile",
         "use_in_assessment": False,
         "assessment_weight": 1,
+        "remediation_scope": "either",
         "assessment_rules": None,
         "recommendation_template": None,
     },
@@ -139,6 +172,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Infer from docker-compose, ORM config, or connection strings",
         "use_in_assessment": True,
         "assessment_weight": 2,
+        "remediation_scope": "modernization",
         "assessment_rules": {
             "legacy_contains": ["db2", "sybase", "informix", "access"],
             "warn_contains": ["oracle 11", "mysql 5.6", "mysql 5.7"],
@@ -155,6 +189,7 @@ DEFAULT_ATTRIBUTES: List[Dict[str, Any]] = [
         "extraction_hint": "Detect .github/workflows, Jenkinsfile, .gitlab-ci.yml, azure-pipelines",
         "use_in_assessment": True,
         "assessment_weight": 2,
+        "remediation_scope": "simple_fix",
         "assessment_rules": {
             "legacy_contains": ["none", "missing", "no", "false"],
             "good_contains": ["github actions", "gitlab", "jenkins", "azure", "circle", "yes", "true"],
@@ -170,6 +205,7 @@ _ASSESSMENT_FIELDS = (
     "assessment_weight",
     "assessment_rules",
     "recommendation_template",
+    "remediation_scope",
 )
 
 
@@ -190,12 +226,20 @@ class AnalysisConfigService:
                 .first()
             )
             if exists:
+                changed = False
                 # Backfill assessment metadata on older seeds (no rules yet)
                 if exists.assessment_rules is None and item.get("use_in_assessment"):
                     exists.use_in_assessment = bool(item.get("use_in_assessment"))
                     exists.assessment_weight = int(item.get("assessment_weight") or 1)
                     exists.assessment_rules = item.get("assessment_rules")
                     exists.recommendation_template = item.get("recommendation_template")
+                    changed = True
+                if not getattr(exists, "remediation_scope", None) and item.get("remediation_scope"):
+                    exists.remediation_scope = normalize_remediation_scope(
+                        item.get("remediation_scope")
+                    )
+                    changed = True
+                if changed:
                     exists.updated_at = datetime.now()
                     updated += 1
                 continue
@@ -214,6 +258,9 @@ class AnalysisConfigService:
                     assessment_weight=int(item.get("assessment_weight") or 1),
                     assessment_rules=item.get("assessment_rules"),
                     recommendation_template=item.get("recommendation_template"),
+                    remediation_scope=normalize_remediation_scope(
+                        item.get("remediation_scope")
+                    ),
                     created_by=created_by,
                 )
             )
@@ -252,7 +299,7 @@ class AnalysisConfigService:
                 AnalysisAttributeDefinition.label,
             )
         )
-        return [self._def_dict(d) for d in q.all()]
+        return [self._def_dict(d, include_applies_when=True) for d in q.all()]
 
     def create_definition(
         self,
@@ -267,6 +314,7 @@ class AnalysisConfigService:
         assessment_weight: int = 1,
         assessment_rules: Optional[Dict[str, Any]] = None,
         recommendation_template: Optional[str] = None,
+        remediation_scope: Optional[str] = "either",
         created_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         existing = (
@@ -295,6 +343,7 @@ class AnalysisConfigService:
             assessment_weight=max(1, min(5, int(assessment_weight or 1))),
             assessment_rules=assessment_rules,
             recommendation_template=recommendation_template,
+            remediation_scope=normalize_remediation_scope(remediation_scope),
             created_by=created_by,
         )
         self.db.add(defn)
@@ -332,6 +381,8 @@ class AnalysisConfigService:
             value = updates[field]
             if field == "assessment_weight" and value is not None:
                 value = max(1, min(5, int(value)))
+            if field == "remediation_scope":
+                value = normalize_remediation_scope(value)
             setattr(defn, field, value)
         defn.updated_at = datetime.now()
         self.db.commit()
@@ -421,8 +472,10 @@ class AnalysisConfigService:
             for attr, repo in rows
         ]
 
-    def _def_dict(self, d: AnalysisAttributeDefinition) -> Dict[str, Any]:
-        return {
+    def _def_dict(
+        self, d: AnalysisAttributeDefinition, *, include_applies_when: bool = False
+    ) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
             "id": d.id,
             "key": d.key,
             "label": d.label,
@@ -436,7 +489,17 @@ class AnalysisConfigService:
             "assessment_weight": int(d.assessment_weight or 1),
             "assessment_rules": d.assessment_rules,
             "recommendation_template": d.recommendation_template,
+            "remediation_scope": normalize_remediation_scope(
+                getattr(d, "remediation_scope", None)
+            ),
         }
+        if include_applies_when:
+            from app.services.modernize.signal_applicability import default_applies_when_for_key
+
+            seed = default_applies_when_for_key(d.key)
+            if seed:
+                out["applies_when"] = seed
+        return out
 
     def _attr_dict(self, a: RepositoryAnalysisAttribute) -> Dict[str, Any]:
         return {

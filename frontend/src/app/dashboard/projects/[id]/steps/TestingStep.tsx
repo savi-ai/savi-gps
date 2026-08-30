@@ -5,7 +5,7 @@ import apiClient from '@/lib/axios'
 import { useAuth } from '@/contexts/AuthContext'
 import type { StepContentProps } from '../types'
 
-export function TestingStepContent({ project, canEdit, onUpdate }: StepContentProps) {
+export function TestingStepContent({ project, canEdit, onUpdate, onStepChange }: StepContentProps) {
   const { hasPermission } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -445,6 +445,28 @@ export function TestingStepContent({ project, canEdit, onUpdate }: StepContentPr
           {!project.code_implementation && (
             <p className="hint-text">You need to generate code first before creating tests.</p>
           )}
+        </div>
+      )}
+
+      {project.pillar === 'modernize' && canEdit && (project.tests || project.code_implementation) && (
+        <div style={{ marginTop: '1.5rem' }}>
+          <button
+            className="button"
+            type="button"
+            onClick={async () => {
+              try {
+                await apiClient.patch(
+                  `/api/v1/golden-path/projects/${project.id}/step?step=push`
+                )
+                onUpdate()
+                onStepChange?.('push')
+              } catch (err: any) {
+                setError(err.response?.data?.detail || 'Failed to continue to Push')
+              }
+            }}
+          >
+            Continue to Push
+          </button>
         </div>
       )}
     </div>

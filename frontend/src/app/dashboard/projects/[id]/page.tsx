@@ -11,14 +11,22 @@ import {
 } from '@/components/build/ProjectLineageBanner'
 import { useProject } from '@/hooks/queries/useProjects'
 import type { Project } from './types'
-import { WORKFLOW_STEPS, STEP_ORDER } from './types'
+import { getWorkflowSteps, getStepOrder } from './types'
 import { IdeaStepContent } from './steps/IdeaStep'
 import { FeaturesStepContent } from './steps/FeaturesStep'
 import { ArchitectureStepContent } from './steps/ArchitectureStep'
 import { StoriesStepContent } from './steps/StoriesStep'
 import { DeveloperStepContent } from './steps/DeveloperStep'
 import { TestingStepContent } from './steps/TestingStep'
+import { PushStepContent } from './steps/PushStep'
+import ExecutionPanel from '@/components/modernize/ExecutionPanel'
 import './project-detail.css'
+
+function usesPlanExecutionWorkspace(pillar?: string | null, sourcePlanId?: string | null): boolean {
+  if (pillar === 'fix' && sourcePlanId) return true
+  if (pillar === 'modernize' && sourcePlanId) return true
+  return false
+}
 
 export default function ProjectDetailPage() {
   const router = useRouter()
@@ -38,10 +46,18 @@ export default function ProjectDetailPage() {
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null)
 
   useEffect(() => {
+    // Wait for project load before gating modernize-only access
+    if (loading) return
+    if (project?.pillar === 'modernize' || project?.pillar === 'fix') {
+      if (!hasCapability('modernize') && !hasCapability('build')) {
+        router.push('/dashboard')
+      }
+      return
+    }
     if (!hasCapability('build')) {
       router.push('/dashboard')
     }
-  }, [hasCapability, router])
+  }, [hasCapability, router, project?.pillar, loading])
 
   useEffect(() => {
     if (project?.current_step) {
@@ -55,6 +71,13 @@ export default function ProjectDetailPage() {
   const fetchProject = () => {
     refetch()
   }
+
+  const stepOrder = getStepOrder(project?.pillar)
+  const workflowSteps = getWorkflowSteps(project?.pillar)
+  const planExecutionMode = usesPlanExecutionWorkspace(project?.pillar, project?.source_plan_id)
+  const isFixPlan = project?.pillar === 'fix'
+  const canManageExecution =
+    hasPermission('can_manage_modernize') || hasRole('admin')
 
   const canEditStep = (stepId: string): boolean => {
     if (!project) return false
@@ -74,6 +97,12 @@ export default function ProjectDetailPage() {
           return hasPermission('can_use_developer_agent')
         case 'testing':
           return hasPermission('can_use_testing_agent')
+        case 'push':
+          return (
+            hasPermission('can_use_developer_agent') ||
+            hasPermission('can_manage_modernize') ||
+            hasRole('admin')
+          )
         default:
           return false
       }
@@ -82,18 +111,17 @@ export default function ProjectDetailPage() {
     if (!hasStepPermission) return false
 
     // Check if this step is current or previous (sequential editing)
-    const stepOrder = STEP_ORDER as readonly string[]
     const currentIndex = stepOrder.indexOf(project.current_step)
     const stepIndex = stepOrder.indexOf(stepId)
+    if (stepIndex < 0) return false
 
     // Can edit if it's the current step or a previous step
-    return stepIndex <= currentIndex
+    return stepIndex <= currentIndex || (project.current_step === 'testing' && stepId === 'push')
   }
 
   const getStepStatus = (stepId: string): 'completed' | 'active' | 'pending' => {
     if (!project) return 'pending'
     
-    const stepOrder = STEP_ORDER as readonly string[]
     const currentIndex = stepOrder.indexOf(project.current_step)
     const stepIndex = stepOrder.indexOf(stepId)
     
@@ -118,17 +146,19 @@ export default function ProjectDetailPage() {
         return !!project.code_implementation
       case 'testing':
         return !!project.tests
+      case 'push':
+        return project.current_step === 'push'
       default:
         return false
     }
   }
 
   const handleRunWorkflow = async () => {
-    if (!project) return
+    if (!project || planExecutionMode) return
     try {
       setRunningWorkflow(true)
       setWorkflowRunError(null)
-      const response = await apiClient.post('/api/v1/workflow/run', {
+      const response = await apiClient.post('/api/v1/golden-path/workflow/run', {
         idea: project.vision || project.description || '',
         execution_mode: executionMode,
         options: { project_id: project.id }
@@ -141,7 +171,14 @@ export default function ProjectDetailPage() {
     }
   }
 
-  if (!hasCapability('build')) {
+  if (!loading && project && (project.pillar === 'modernize' || project.pillar === 'fix')) {
+    if (!hasCapability('modernize') && !hasCapability('build')) {
+      return null
+    }
+  } else if (
+    !hasCapability('build') &&
+    !(project?.pillar === 'modernize' && hasCapability('modernize'))
+  ) {
     return null
   }
 
@@ -215,21 +252,44 @@ export default function ProjectDetailPage() {
         linkedRepositories={project.linked_repositories}
       />
 
+      {planExecutionMode && project.source_plan_id ? (
+        <>
+          <div
+            className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+            style={{ margin: '1.5rem 0' }}
+          >
+            <p className="font-medium">
+              {isFixPlan ? 'Fix execution' : 'Modernization execution'} uses the workspace below — not
+              &ldquo;Run Workflow&rdquo;.
+            </p>
+            <p className="mt-1 text-xs opacity-90">
+              {isFixPlan
+                ? 'Copilot: approve each stage — Fix → Code → Test → Push → PR on the same repository.'
+                : 'Copilot: approve each stage — Requirements → Tasks → Architecture → Code → Test → Push.'}
+            </p>
+          </div>
+          <ExecutionPanel
+            planId={project.source_plan_id}
+            planType={isFixPlan ? 'fix' : 'modernize'}
+            spawnedProjectId={project.id}
+            canManage={canManageExecution}
+          />
+        </>
+      ) : (
+        <>
       {/* Workflow Steps */}
       <div className="workflow-wizard">
         <div className="workflow-steps">
-          {WORKFLOW_STEPS.map((step, index) => {
+          {workflowSteps.map((step, index) => {
             const IconComponent = step.icon
             const status = getStepStatus(step.id)
             const canEdit = canEditStep(step.id)
-            const hasData = hasStepData(step.id)
             const isActive = activeStep === step.id
             
             // Check if step is locked (future step)
-            const stepOrder = STEP_ORDER as readonly string[]
             const currentIndex = stepOrder.indexOf(project.current_step)
             const stepIndex = stepOrder.indexOf(step.id)
-            const isLocked = stepIndex > currentIndex
+            const isLocked = stepIndex > currentIndex && !(project.current_step === 'testing' && step.id === 'push' && project.tests)
 
             return (
               <div
@@ -261,9 +321,10 @@ export default function ProjectDetailPage() {
       <ProjectContextStrip
         activeStep={activeStep}
         linkedRepositories={project.linked_repositories}
+        pillar={project.pillar}
       />
 
-      {/* Execution Mode Selector */}
+      {/* Execution Mode Selector — greenfield Build only */}
       <div className="execution-mode-selector" style={{
         margin: '1.5rem 0',
         padding: '1.25rem',
@@ -383,6 +444,7 @@ export default function ProjectDetailPage() {
             project={project} 
             canEdit={canEditStep('stories')}
             onUpdate={fetchProject}
+            onStepChange={setActiveStep}
           />
         )}
         {activeStep === 'developer' && (
@@ -397,9 +459,19 @@ export default function ProjectDetailPage() {
             project={project} 
             canEdit={canEditStep('testing')}
             onUpdate={fetchProject}
+            onStepChange={setActiveStep}
+          />
+        )}
+        {activeStep === 'push' && (
+          <PushStepContent
+            project={project}
+            canEdit={canEditStep('push')}
+            onUpdate={fetchProject}
           />
         )}
       </div>
+        </>
+      )}
     </div>
   )
 }

@@ -15,35 +15,95 @@ from app.core.database import (
     RepositoryWikiSite,
     WikiPage,
 )
-from app.services.intelligence.analysis_config_service import AnalysisConfigService
+from app.services.intelligence.analysis_config_service import (
+    AnalysisConfigService,
+    normalize_remediation_scope,
+)
 from app.services.intelligence.analysis_storage import load_analysis_artifacts, resolve_analysis_dir
+from app.services.modernize.signal_applicability import is_attribute_applicable
 
 
 def _signal(
     signal_id: str,
     label: str,
     value: str,
-    score: int,
+    score: Optional[int],
     status: str,
     detail: str,
     *,
     recommendation: Optional[str] = None,
     source: str = "platform",
     weight: int = 1,
+    remediation_scope: Optional[str] = None,
+    category: str = "platform",
+    applicable: bool = True,
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "id": signal_id,
         "label": label,
         "value": value,
-        "score": max(0, min(100, score)),
+        "score": max(0, min(100, score)) if score is not None else None,
         "status": status,
         "detail": detail,
         "source": source,
         "weight": weight,
+        "category": category,
+        "applicable": applicable,
     }
     if recommendation:
         out["recommendation"] = recommendation
+    if remediation_scope:
+        out["remediation_scope"] = normalize_remediation_scope(remediation_scope)
     return out
+
+
+def recommend_plan_type(signals: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Suggest fix vs modernize from warn/bad signal remediation scopes."""
+    fix_w = 0.0
+    mod_w = 0.0
+    for s in signals:
+        if s.get("status") not in ("bad", "warn") or not s.get("applicable", True):
+            continue
+        w = float(s.get("weight") or 1)
+        if s.get("status") == "bad":
+            w *= 2.0
+        scope = normalize_remediation_scope(s.get("remediation_scope"))
+        if scope == "simple_fix":
+            fix_w += w
+        elif scope == "modernization":
+            mod_w += w
+        else:
+            fix_w += w * 0.5
+            mod_w += w * 0.5
+
+    if fix_w == 0 and mod_w == 0:
+        return {
+            "recommended_plan_type": "both",
+            "recommendation_reason": (
+                "No high-priority remediation signals — choose a fix plan for in-repo "
+                "work or a modernize plan for architecture-led rebuilds."
+            ),
+        }
+    if fix_w > mod_w * 1.25:
+        return {
+            "recommended_plan_type": "fix",
+            "recommendation_reason": (
+                "Most gap signals are scoped as simple fixes (same-repo PR)."
+            ),
+        }
+    if mod_w > fix_w * 1.25:
+        return {
+            "recommended_plan_type": "modernize",
+            "recommendation_reason": (
+                "Most gap signals indicate modernization themes (runtime/framework/architecture)."
+            ),
+        }
+    return {
+        "recommended_plan_type": "both",
+        "recommendation_reason": (
+            "Signals mix simple fixes and modernization themes — you can create either plan type."
+        ),
+    }
 
 
 def _status_for_score(score: int) -> str:
@@ -137,6 +197,23 @@ def _match_any(value_lower: str, needles: Optional[List[Any]]) -> Optional[str]:
     return None
 
 
+def _na_attribute_signal(definition: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    key = definition.get("key") or "attr"
+    label = definition.get("label") or key
+    return _signal(
+        f"attr:{key}",
+        label,
+        "Not applicable",
+        None,
+        "na",
+        reason,
+        source="analysis_config",
+        weight=0,
+        category=str(definition.get("category") or "general"),
+        applicable=False,
+    )
+
+
 def score_attribute_signal(
     definition: Dict[str, Any],
     value_text: Optional[str],
@@ -151,6 +228,7 @@ def score_attribute_signal(
     key = definition.get("key") or "attr"
     weight = int(definition.get("assessment_weight") or 1)
     rec_template = definition.get("recommendation_template")
+    scope = normalize_remediation_scope(definition.get("remediation_scope"))
 
     if not value_text or not str(value_text).strip():
         missing = int(rules.get("missing_score", 40))
@@ -165,6 +243,7 @@ def score_attribute_signal(
             or f"Ensure {label} can be detected from the codebase (update Analysis Config hint).",
             source="analysis_config",
             weight=weight,
+            remediation_scope=scope,
         )
 
     value = str(value_text).strip()
@@ -209,6 +288,9 @@ def score_attribute_signal(
         recommendation=rec,
         source="analysis_config",
         weight=weight,
+        remediation_scope=scope,
+        category=str(definition.get("category") or "general"),
+        applicable=True,
     )
 
 
@@ -272,6 +354,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
             recommendation="Re-index before modernization if the index is stale.",
             source="platform",
             weight=2,
+            remediation_scope="simple_fix",
         ),
         _signal(
             "documentation",
@@ -283,6 +366,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
             recommendation="Deepen wiki sections (Architecture, Business Logic) before large refactors.",
             source="platform",
             weight=2,
+            remediation_scope="either",
         ),
         _signal(
             "test_coverage",
@@ -294,6 +378,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
             recommendation="Improve automated tests before agent Code→Push stages.",
             source="platform",
             weight=2,
+            remediation_scope="simple_fix",
         ),
         _signal(
             "drift",
@@ -305,6 +390,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
             recommendation="Re-verify or re-generate stale wiki pages.",
             source="platform",
             weight=1,
+            remediation_scope="simple_fix",
         ),
     ]
 
@@ -312,21 +398,47 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
     for defn in assessment_defs:
         key = (defn.get("key") or "").lower()
         row = attrs_map.get(key)
+        value_text = row.value_text if row else None
+        applicable, na_reason = is_attribute_applicable(
+            defn,
+            db=db,
+            repository_id=repository.id,
+            wiki_json=wiki_json if isinstance(wiki_json, dict) else None,
+            attrs_map=attrs_map,
+            value_text=value_text,
+        )
+        if not applicable:
+            signals.append(_na_attribute_signal(defn, na_reason))
+            continue
         signals.append(
             score_attribute_signal(
                 defn,
-                row.value_text if row else None,
+                value_text,
                 source_file=row.source_file if row else None,
             )
         )
 
     # Alias for legacy modernize policies that target signal id "runtime"
     runtime_keys = ("java_version", "node_version", "python_version")
-    runtime_attr = next((attrs_map.get(k) for k in runtime_keys if attrs_map.get(k)), None)
-    runtime_defn = next(
-        (d for d in assessment_defs if (d.get("key") or "") in runtime_keys),
-        None,
-    )
+    runtime_attr = None
+    runtime_defn = None
+    for rk in runtime_keys:
+        row = attrs_map.get(rk)
+        defn = next((d for d in assessment_defs if (d.get("key") or "").lower() == rk), None)
+        if not defn:
+            continue
+        applicable, _ = is_attribute_applicable(
+            defn,
+            db=db,
+            repository_id=repository.id,
+            wiki_json=wiki_json if isinstance(wiki_json, dict) else None,
+            attrs_map=attrs_map,
+            value_text=row.value_text if row else None,
+        )
+        if applicable and row and row.value_text and str(row.value_text).strip():
+            runtime_attr = row
+            runtime_defn = defn
+            break
     if runtime_defn:
         runtime_sig = score_attribute_signal(
             {**runtime_defn, "key": "runtime", "label": "Runtime / language"},
@@ -370,11 +482,17 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
     # Prefer unique signals for scoring/UI: drop runtime alias when attr:* runtime exists
     has_attr_runtime = any(
         s.get("id") in ("attr:java_version", "attr:node_version", "attr:python_version")
+        and s.get("applicable", True)
+        and s.get("status") != "na"
         for s in signals
     )
     for_overall = [
-        s for s in signals
-        if not (has_attr_runtime and s.get("id") == "runtime")
+        s
+        for s in signals
+        if s.get("applicable", True)
+        and s.get("status") != "na"
+        and s.get("score") is not None
+        and not (has_attr_runtime and s.get("id") == "runtime")
     ]
     total_w = sum(int(s.get("weight") or 1) for s in for_overall) or 1
     overall = round(
@@ -387,6 +505,8 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
     else:
         level = "blocked"
     signals = for_overall
+
+    plan_rec = recommend_plan_type(signals)
 
     existing_plans = (
         db.query(ModernizationPlan)
@@ -409,6 +529,8 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
         "overall_score": overall,
         "readiness_level": level,
         "signals": signals,
+        "recommended_plan_type": plan_rec["recommended_plan_type"],
+        "recommendation_reason": plan_rec["recommendation_reason"],
         "tech_stack": tech_stack,
         "overview": overview,
         "business_logic_summary": (wiki_json or {}).get("business_logic_layer", {}).get("summary"),
@@ -418,6 +540,7 @@ def compute_readiness(db: Session, repository: Repository) -> Dict[str, Any]:
                 "title": p.title,
                 "state": p.state,
                 "spawned_project_id": p.spawned_project_id,
+                "plan_type": getattr(p, "plan_type", None) or "modernize",
             }
             for p in existing_plans
         ],

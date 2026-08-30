@@ -385,8 +385,9 @@
 }
 
 .chat-message.user .chat-bubble {
-  background: #2563eb;
-  color: white;
+  background: #d0dcf6;
+  color: #1e293b;
+  border: 1px solid #b8c9ef;
   border-bottom-right-radius: 4px;
 }
 
@@ -395,6 +396,50 @@
   color: #1e293b;
   border: 1px solid #e2e8f0;
   border-bottom-left-radius: 4px;
+}
+
+.chat-plain-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.chat-markdown .chat-md-p {
+  margin: 0 0 0.75rem;
+}
+
+.chat-markdown .chat-md-p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown .chat-md-list {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.chat-markdown .chat-md-li {
+  margin: 0.35rem 0;
+}
+
+.chat-markdown .chat-md-li > .chat-md-p {
+  margin: 0;
+}
+
+.chat-markdown .chat-md-strong {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.chat-markdown .chat-md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  background: #f1f5f9;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
 }
 
 /* Typing Indicator */
@@ -620,6 +665,66 @@
   gap: 1rem;
 }
 
+.features-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.features-save-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #64748b;
+  flex: 1;
+  min-width: 220px;
+}
+
+.features-save-hint strong {
+  color: #1e293b;
+}
+
+.button-add-feature {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.features-empty-inline {
+  padding: 1.25rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.features-generate-row {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.features-generate-row .button-secondary {
+  background: white;
+  color: #2563eb;
+  border: 1px solid #2563eb;
+}
+
+.features-generate-row .button-secondary:hover {
+  background: #eff6ff;
+}
+
+.features-generate-row .hint-text {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
 .feature-card {
   background: white;
   border: 1px solid #e2e8f0;
@@ -671,6 +776,62 @@
 .feature-actions {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.feature-actions .button-small {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8125rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.feature-actions .button-edit {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.feature-actions .button-edit:hover {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.feature-actions .button-delete {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.feature-actions .button-delete:hover {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.feature-actions .button-save {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.feature-actions .button-save:hover {
+  background: #15803d;
+  color: #ffffff;
+}
+
+.feature-actions .button-cancel {
+  background: #475569;
+  color: #ffffff;
+}
+
+.feature-actions .button-cancel:hover {
+  background: #334155;
+  color: #ffffff;
 }
 
 .button-small {
@@ -913,6 +1074,21 @@
   background: #0f172a;
   color: #f1f5f9;
   border-color: #334155;
+}
+
+.dark .chat-message.user .chat-bubble {
+  background: #2a4068;
+  color: #e2e8f0;
+  border-color: #3b5280;
+}
+
+.dark .chat-markdown .chat-md-strong {
+  color: #f8fafc;
+}
+
+.dark .chat-markdown .chat-md-code {
+  background: #1e293b;
+  color: #e2e8f0;
 }
 
 .dark .user-avatar {
@@ -1990,6 +2166,34 @@
 .button-small:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Keep feature action colors when generic .button-small appears later in this file */
+.feature-actions .button-edit,
+.feature-actions .button-delete,
+.feature-actions .button-save,
+.feature-actions .button-cancel {
+  border: none;
+}
+
+.feature-actions .button-edit {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.feature-actions .button-delete {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.feature-actions .button-save {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.feature-actions .button-cancel {
+  background: #475569;
+  color: #ffffff;
 }
 
 .button-secondary {

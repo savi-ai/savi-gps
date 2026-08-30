@@ -330,6 +330,86 @@ class GitService:
         
         logger.info(f"Wrote all test files to {base_dir}")
     
+    def push_workspace_branch(
+        self,
+        workspace_path: str,
+        *,
+        branch_name: str,
+        commit_message: str,
+        remote_url: Optional[str] = None,
+        token: Optional[str] = None,
+        base_branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Commit and push from an existing git checkout (fix/modernize execution workspace)."""
+        auth_token = token or self.github_token
+        if not auth_token:
+            return {"success": False, "error": "GitHub token not configured"}
+
+        cwd = workspace_path
+        if not os.path.isdir(os.path.join(cwd, ".git")) and not os.path.isfile(os.path.join(cwd, ".git")):
+            return {"success": False, "error": "Workspace is not a git repository"}
+
+        try:
+            self._run_git_command(
+                ["git", "config", "user.email", "savi-bot@savi.ai"],
+                cwd=cwd,
+            )
+            self._run_git_command(["git", "config", "user.name", "Savi GPS"], cwd=cwd)
+
+            if remote_url and remote_url.startswith("https://github.com/"):
+                auth_remote = remote_url.replace(
+                    "https://github.com/",
+                    f"https://{auth_token}@github.com/",
+                )
+                if not auth_remote.endswith(".git"):
+                    auth_remote = f"{auth_remote}.git"
+                self._run_git_command(["git", "remote", "set-url", "origin", auth_remote], cwd=cwd)
+
+            # Ensure branch exists from current HEAD
+            try:
+                self._run_git_command(["git", "checkout", "-B", branch_name], cwd=cwd)
+            except subprocess.CalledProcessError:
+                self._run_git_command(["git", "checkout", branch_name], cwd=cwd)
+
+            self._run_git_command(["git", "add", "-A"], cwd=cwd)
+            status = self._run_git_command(
+                ["git", "status", "--porcelain"],
+                cwd=cwd,
+                capture_output=True,
+            )
+            if not (status.stdout or "").strip():
+                sha = self._run_git_command(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=cwd,
+                    capture_output=True,
+                )
+                return {
+                    "success": True,
+                    "message": "No changes to commit",
+                    "branch": branch_name,
+                    "commit_sha": (sha.stdout or "").strip(),
+                }
+
+            self._run_git_command(["git", "commit", "-m", commit_message], cwd=cwd)
+            sha = self._run_git_command(
+                ["git", "rev-parse", "HEAD"],
+                cwd=cwd,
+                capture_output=True,
+            )
+            self._run_git_command(["git", "push", "-u", "origin", branch_name], cwd=cwd)
+            return {
+                "success": True,
+                "message": f"Pushed branch {branch_name}",
+                "branch": branch_name,
+                "commit_sha": (sha.stdout or "").strip(),
+                "base_branch": base_branch,
+            }
+        except subprocess.CalledProcessError as exc:
+            err = exc.stderr or exc.stdout or str(exc)
+            return {"success": False, "error": f"Git failed: {err[:500]}"}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)[:500]}
+
     def _write_code_to_disk(self, base_dir: str, code_implementation: Dict[str, Any]) -> None:
         """
         Write generated code files to disk.

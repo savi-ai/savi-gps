@@ -351,17 +351,32 @@ async def get_features_status(
         if task.status == TaskStatus.COMPLETED:
             # Get task result
             result = task_service.get_task_result(task.id)
-            if result and "features" in result:
-                features_data = result["features"]
+            if result and result.get("error"):
+                project.feature_generation_status = "failed"
+                db.commit()
+                return {
+                    "status": "failed",
+                    "error": result.get("error"),
+                    "task_id": task.id,
+                }
+            features_data = (result or {}).get("features") if isinstance(result, dict) else None
+            if features_data:
                 project.features = features_data
                 project.feature_generation_status = "completed"
                 db.commit()
-                
+
                 return {
                     "status": "completed",
                     "features": features_data,
                     "task_id": task.id
                 }
+            project.feature_generation_status = "failed"
+            db.commit()
+            return {
+                "status": "failed",
+                "error": task.error or "Feature generation completed without features",
+                "task_id": task.id,
+            }
         elif task.status == TaskStatus.FAILED:
             project.feature_generation_status = "failed"
             db.commit()
@@ -883,6 +898,8 @@ async def get_project(
             "priority": project.priority,
             "target_audience": project.target_audience,
             "default_execution_mode": getattr(project, 'default_execution_mode', 'copilot'),
+            "github_repo_url": project.github_repo_url,
+            "target_branch": getattr(project, "target_branch", None) or "main",
             "conversation_history": conversation_history,
             "vision": project.vision,
             "features": project.features,
@@ -1100,7 +1117,7 @@ async def update_project_step(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        valid_steps = ['idea', 'features', 'architecture', 'stories', 'developer', 'testing']
+        valid_steps = ['idea', 'features', 'architecture', 'stories', 'developer', 'testing', 'push']
         if step not in valid_steps:
             raise HTTPException(status_code=400, detail=f"Invalid step. Must be one of: {', '.join(valid_steps)}")
         
@@ -1786,17 +1803,27 @@ async def push_to_github(
                 detail="No code generated for this project"
             )
         
-        # Push to GitHub
+        # Push to GitHub (modernize uses user-provided target_branch when set)
+        base_branch = getattr(project, "target_branch", None) or "main"
+        if (project.pillar or "").lower() == "modernize":
+            branch_name = f"savi/modernize-{project.id[:8]}"
+        else:
+            branch_name = "savi/code_scaffolded"
+
         git_service = get_git_service()
         result = git_service.push_code_to_github(
             repo_url=project.github_repo_url,
             code_implementation=project.code_implementation,
             project_name=project.name,
-            branch_name="savi/code_scaffolded"
+            branch_name=branch_name,
         )
         
         if result.get('success'):
             logger.info(f"Successfully pushed code to GitHub for project {project.id}")
+            if (project.pillar or "").lower() == "modernize":
+                project.current_step = "push"
+                project.step_status = "Completed"
+                db.commit()
             graduation = None
             try:
                 from app.services.build.project_repo_graduation_service import (
@@ -1815,7 +1842,13 @@ async def push_to_github(
                     project.id,
                     grad_err,
                 )
-            result = {**result, "graduation": graduation}
+            result = {
+                **result,
+                "graduation": graduation,
+                "branch_name": branch_name,
+                "base_branch": base_branch,
+                "alpha_preview": (project.pillar or "").lower() == "modernize",
+            }
             return result
         else:
             logger.error(f"Failed to push code to GitHub: {result.get('error')}")
