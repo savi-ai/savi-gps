@@ -7,6 +7,10 @@ import {
   BookOpen,
   Code2,
   FlaskConical,
+  Upload,
+  ListTodo,
+  Wrench,
+  GitPullRequest,
 } from 'lucide-react'
 
 export type Project = BuildProject
@@ -18,7 +22,7 @@ export interface StepContentProps {
   onStepChange?: (step: string) => void
 }
 
-export const WORKFLOW_STEPS: Array<{
+export const BUILD_WORKFLOW_STEPS: Array<{
   id: string
   label: string
   icon: LucideIcon
@@ -32,4 +36,91 @@ export const WORKFLOW_STEPS: Array<{
   { id: 'testing', label: 'Testing', icon: FlaskConical, description: 'Create tests' },
 ]
 
-export const STEP_ORDER = ['idea', 'features', 'architecture', 'stories', 'developer', 'testing'] as const
+/** W5 modernize Alpha: Requirements → Tasks → Code → Test → Push */
+export const MODERNIZE_WORKFLOW_STEPS: Array<{
+  id: string
+  label: string
+  icon: LucideIcon
+  description: string
+}> = [
+  {
+    id: 'features',
+    label: 'Requirements',
+    icon: ClipboardList,
+    description: 'Derive modernization requirements from the plan',
+  },
+  {
+    id: 'stories',
+    label: 'Tasks',
+    icon: ListTodo,
+    description: 'Break requirements into implementable tasks',
+  },
+  {
+    id: 'developer',
+    label: 'Code',
+    icon: Code2,
+    description: 'Implement against linked source / target repo',
+  },
+  {
+    id: 'testing',
+    label: 'Test',
+    icon: FlaskConical,
+    description: 'Generate or run tests before push',
+  },
+  {
+    id: 'push',
+    label: 'Push',
+    icon: Upload,
+    description: 'Push branch to the user-provided GitHub repo',
+  },
+]
+
+export const BUILD_STEP_ORDER = [
+  'idea',
+  'features',
+  'architecture',
+  'stories',
+  'developer',
+  'testing',
+] as const
+
+export const MODERNIZE_STEP_ORDER = [
+  'features',
+  'stories',
+  'developer',
+  'testing',
+  'push',
+] as const
+
+/** W8 fix track: Fix → Code → Test → Push → PR (execution panel drives stages) */
+export const FIX_WORKFLOW_STEPS: Array<{
+  id: string
+  label: string
+  icon: LucideIcon
+  description: string
+}> = [
+  { id: 'fix', label: 'Fix', icon: Wrench, description: 'Lock remediation scope from findings' },
+  { id: 'code', label: 'Code', icon: Code2, description: 'Apply patches in source/' },
+  { id: 'test', label: 'Test', icon: FlaskConical, description: 'Run or add verification' },
+  { id: 'push', label: 'Push', icon: Upload, description: 'Push branch to same repo' },
+  { id: 'pr', label: 'PR', icon: GitPullRequest, description: 'Open pull request' },
+]
+
+export const FIX_STEP_ORDER = ['fix', 'code', 'test', 'push', 'pr'] as const
+
+/** @deprecated Prefer getWorkflowSteps(pillar) */
+export const WORKFLOW_STEPS = BUILD_WORKFLOW_STEPS
+/** @deprecated Prefer getStepOrder(pillar) */
+export const STEP_ORDER = BUILD_STEP_ORDER
+
+export function getWorkflowSteps(pillar?: string | null) {
+  if (pillar === 'fix') return FIX_WORKFLOW_STEPS
+  if (pillar === 'modernize') return MODERNIZE_WORKFLOW_STEPS
+  return BUILD_WORKFLOW_STEPS
+}
+
+export function getStepOrder(pillar?: string | null): readonly string[] {
+  if (pillar === 'fix') return FIX_STEP_ORDER
+  if (pillar === 'modernize') return MODERNIZE_STEP_ORDER
+  return BUILD_STEP_ORDER
+}

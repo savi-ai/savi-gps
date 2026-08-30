@@ -93,6 +93,7 @@ class Project(Base):
     priority = Column(String, nullable=True)  # "low", "medium", "high", "critical"
     target_audience = Column(String, nullable=True)
     github_repo_url = Column(String, nullable=True)  # GitHub repository URL for code push
+    target_branch = Column(String, nullable=True)  # User-provided push/PR base branch (modernize Alpha)
     conversation_history = Column(JSON, nullable=True)  # List of {role, content}
     vision = Column(Text, nullable=True)
     features = Column(JSON, nullable=True)  # Generated features
@@ -697,12 +698,13 @@ class ModernizationPlaybook(Base):
 
 
 class ModernizationPlan(Base):
-    """Per-repository modernization assessment and execution plan"""
+    """Modernization / fix plan — repo-scoped (fix) or application-scoped (modernize)."""
     __tablename__ = "modernization_plans"
 
     id = Column(String, primary_key=True)
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
-    repository_id = Column(String, ForeignKey("repositories.id"), nullable=False, index=True)
+    # Nullable for app-scoped modernize plans (W8.3); required for fix plans
+    repository_id = Column(String, ForeignKey("repositories.id"), nullable=True, index=True)
     title = Column(String, nullable=False)
     state = Column(String, nullable=False, default="assessing")
     # assessing | planned | executing | verifying | complete | cancelled
@@ -712,6 +714,9 @@ class ModernizationPlan(Base):
     spawned_project_id = Column(String, ForeignKey("projects.id"), nullable=True, index=True)
     source_application_id = Column(String, ForeignKey("applications.id"), nullable=True, index=True)
     plan_bundle_id = Column(String, nullable=True, index=True)
+    plan_type = Column(String, nullable=False, default="modernize")
+    # fix | modernize
+    assessment_run_id = Column(String, nullable=True, index=True)
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -843,6 +848,8 @@ class AnalysisAttributeDefinition(Base):
     assessment_weight = Column(Integer, nullable=False, default=1)  # relative weight 1–5
     assessment_rules = Column(JSON, nullable=True)  # scoring / recommendation hints
     recommendation_template = Column(Text, nullable=True)  # used when signal is warn/bad
+    # simple_fix | modernization | either — guides fix vs modernize plan choice
+    remediation_scope = Column(String, nullable=True, default="either")
     created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -1145,6 +1152,7 @@ def init_db():
                         'target_audience': 'TEXT',
                         'step_status': 'TEXT',
                         'github_repo_url': 'TEXT',
+                        'target_branch': 'TEXT',
                         'default_execution_mode': "TEXT DEFAULT 'copilot'"
                     }
                     
@@ -1486,6 +1494,8 @@ def init_db():
                     for col_name, col_type in {
                         "source_application_id": "TEXT",
                         "plan_bundle_id": "TEXT",
+                        "plan_type": "TEXT NOT NULL DEFAULT 'modernize'",
+                        "assessment_run_id": "TEXT",
                     }.items():
                         if col_name not in plan_columns:
                             conn.execute(text(
@@ -1493,6 +1503,83 @@ def init_db():
                             ))
                             conn.commit()
                             logger.info(f"Added {col_name} column to modernization_plans table")
+                    conn.execute(text(
+                        "UPDATE modernization_plans SET plan_type = 'modernize' "
+                        "WHERE plan_type IS NULL OR plan_type = ''"
+                    ))
+                    conn.commit()
+
+                    # W8.3: allow NULL repository_id for app-scoped modernize plans
+                    repo_col = conn.execute(
+                        text("PRAGMA table_info(modernization_plans)")
+                    ).fetchall()
+                    repo_notnull = next(
+                        (row[3] for row in repo_col if row[1] == "repository_id"),
+                        0,
+                    )
+                    if repo_notnull == 1:
+                        logger.info(
+                            "Rebuilding modernization_plans to make repository_id nullable"
+                        )
+                        conn.execute(text("PRAGMA foreign_keys=OFF"))
+                        conn.execute(text(
+                            """
+                            CREATE TABLE modernization_plans_w83 (
+                                id TEXT PRIMARY KEY,
+                                tenant_id TEXT NOT NULL,
+                                repository_id TEXT,
+                                title TEXT NOT NULL,
+                                state TEXT NOT NULL,
+                                playbook_id TEXT,
+                                assessment_json JSON,
+                                plan_md TEXT,
+                                spawned_project_id TEXT,
+                                source_application_id TEXT,
+                                plan_bundle_id TEXT,
+                                plan_type TEXT NOT NULL DEFAULT 'modernize',
+                                assessment_run_id TEXT,
+                                created_by TEXT,
+                                created_at DATETIME,
+                                updated_at DATETIME
+                            )
+                            """
+                        ))
+                        conn.execute(text(
+                            """
+                            INSERT INTO modernization_plans_w83 (
+                                id, tenant_id, repository_id, title, state, playbook_id,
+                                assessment_json, plan_md, spawned_project_id,
+                                source_application_id, plan_bundle_id, plan_type,
+                                assessment_run_id, created_by, created_at, updated_at
+                            )
+                            SELECT
+                                id, tenant_id, repository_id, title, state, playbook_id,
+                                assessment_json, plan_md, spawned_project_id,
+                                source_application_id, plan_bundle_id,
+                                COALESCE(NULLIF(plan_type, ''), 'modernize'),
+                                assessment_run_id, created_by, created_at, updated_at
+                            FROM modernization_plans
+                            """
+                        ))
+                        conn.execute(text("DROP TABLE modernization_plans"))
+                        conn.execute(text(
+                            "ALTER TABLE modernization_plans_w83 RENAME TO modernization_plans"
+                        ))
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_modernization_plans_tenant_id "
+                            "ON modernization_plans (tenant_id)"
+                        ))
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_modernization_plans_repository_id "
+                            "ON modernization_plans (repository_id)"
+                        ))
+                        conn.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_modernization_plans_source_application_id "
+                            "ON modernization_plans (source_application_id)"
+                        ))
+                        conn.execute(text("PRAGMA foreign_keys=ON"))
+                        conn.commit()
+                        logger.info("modernization_plans.repository_id is now nullable")
 
                 if inspector.has_table("savi_work_items"):
                     result = conn.execute(text("PRAGMA table_info(savi_work_items)"))
@@ -1546,6 +1633,7 @@ def init_db():
                         "assessment_weight": "INTEGER DEFAULT 1",
                         "assessment_rules": "JSON",
                         "recommendation_template": "TEXT",
+                        "remediation_scope": "TEXT DEFAULT 'either'",
                     }.items():
                         if col_name not in attr_def_cols:
                             conn.execute(

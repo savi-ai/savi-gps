@@ -45,16 +45,19 @@ _SECTION_TITLES = {
 _SECTION_FOCUS = {
     "overview": (
         "Write a substantive Overview: purpose, primary capabilities, scale, and tech stack. "
-        "Cite evidence paths with backticks like `src/...`."
+        "Cite evidence paths with backticks like `src/...`. "
+        "Do not repeat full Architecture or Business Logic detail — summarize and point readers to those sections."
     ),
     "architecture": (
         "Write a deep Architecture page: layered/runtime style, main components, request/data flows, "
-        "and how packages relate. Keep existing mermaid fences if present; add prose around them. "
-        "Cite source paths with backticks."
+        "and how packages relate. Keep existing mermaid fences if present; add accurate prose around them. "
+        "Use sequenceDiagram-style flows in mermaid when describing request paths. "
+        "Cite source paths with backticks. Summarize BL operations here; link conceptually to Business Logic for step-by-step workflows."
     ),
     "business_logic": (
-        "Write a deep Business Logic Layer page: core services/managers, workflows (step lists), "
-        "business rules, and source file cites with backticks. Prefer concrete operations over fluff."
+        "Write a deep Business Logic Layer page: core services/managers, workflows (numbered step lists), "
+        "business rules, dependencies between components, and source file cites with backticks. "
+        "Prefer concrete operations over fluff. Use call_graph or snippet evidence when present."
     ),
     "api_surface": (
         "Write an API Surface page: summarize entry points with method/path, purpose, and evidence files. "
@@ -62,9 +65,16 @@ _SECTION_FOCUS = {
     ),
     "build_deploy": (
         "Write Build & Deploy: artifacts, CI/CD hints, run-locally steps, and deployment topology notes. "
-        "Cite manifests with backticks."
+        "Include deployment_flow_mermaid from structured context when available. Cite manifests with backticks."
     ),
 }
+
+_SPECIALIST_RULES = (
+    "Cross-link: when another review section holds the canonical detail, mention it briefly "
+    "(e.g. 'See Business Logic for workflow steps') instead of duplicating long prose. "
+    "Keep existing ```mermaid fences from structured context when they match the narrative; fix or replace only if wrong. "
+    "If snippets and JSON lack evidence for a claim, state what is missing rather than padding with generic text."
+)
 
 
 def specialist_enabled() -> bool:
@@ -235,15 +245,17 @@ async def _llm_rewrite_section(
         "Ground every claim in the structured context or code snippets. "
         "Cite file paths with backticks. Do not invent APIs, services, or files. "
         "Do not wrap the whole answer in a markdown fence. "
+        f"{_SPECIALIST_RULES} "
         f"Start with a level-1 heading: # {title}"
     )
     prompt = (
         f"{focus}\n\n"
+        f"{_SPECIALIST_RULES}\n\n"
         f"Repository: {wiki_json.get('repo_name') or 'unknown'}\n"
         f"Section slug: {slug}\n\n"
         f"Structured context (JSON):\n{json.dumps(context, indent=2)[:12000]}\n\n"
         f"Current thin draft (improve / replace):\n{current_md[:4000]}\n\n"
-        f"Code snippets:\n{snippets[:9000] or '(none provided — rely on structured context only)'}\n"
+        f"Code snippets:\n{snippets[:9000] or '(none provided — rely on structured context only; note missing evidence explicitly)'}\n"
     )
 
     t0 = time.monotonic()

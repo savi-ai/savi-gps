@@ -7,30 +7,19 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertTriangle, CheckCircle2, Loader2, Rocket, RefreshCw, Play } from 'lucide-react'
+import { Loader2, Rocket, RefreshCw, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import AgentEffortCard, {
   type AgentEffort,
   type AssessmentSynthesis,
 } from '@/components/modernize/AgentEffortCard'
+import ReadinessSignalsList, {
+  type ReadinessSignal,
+  READINESS_LEVEL_VARIANT,
+  formatReadinessLevel,
+} from '@/components/modernize/ReadinessSignalsList'
 
-export interface ReadinessSignal {
-  id: string
-  label: string
-  value: string
-  score: number
-  status: 'good' | 'warn' | 'bad' | string
-  detail: string
-  recommendation?: string
-  source?: string
-  weight?: number
-  failed_policies?: Array<{
-    policy_name?: string
-    rule_id: string
-    message: string
-    policy_version_id?: string
-  }>
-}
+export type { ReadinessSignal }
 
 export interface ReadinessData {
   assessed?: boolean
@@ -40,8 +29,10 @@ export interface ReadinessData {
   repository_name: string
   repository_status: string
   overall_score?: number
-  readiness_level?: 'low' | 'medium' | 'high' | string
+  readiness_level?: string
   signals?: ReadinessSignal[]
+  recommended_plan_type?: 'fix' | 'modernize' | 'both' | string
+  recommendation_reason?: string
   policy_gaps?: Array<{
     signal_id: string
     policy_name: string
@@ -57,6 +48,7 @@ export interface ReadinessData {
     id: string
     title: string
     state: string
+    plan_type?: string
     spawned_project_id?: string | null
   }>
   indexed: boolean
@@ -76,65 +68,6 @@ interface ReadinessPanelProps {
   canManage?: boolean
 }
 
-const LEVEL_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  high: 'default',
-  medium: 'secondary',
-  low: 'destructive',
-}
-
-function SignalRow({ signal }: { signal: ReadinessSignal }) {
-  const Icon =
-    signal.status === 'good'
-      ? CheckCircle2
-      : signal.status === 'bad'
-        ? AlertTriangle
-        : AlertTriangle
-  const iconClass =
-    signal.status === 'good'
-      ? 'text-emerald-600'
-      : signal.status === 'bad'
-        ? 'text-destructive'
-        : 'text-amber-600'
-
-  const failures = signal.failed_policies || []
-
-  return (
-    <div className="flex items-start justify-between gap-3 py-2">
-      <div className="flex items-start gap-2">
-        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', iconClass)} />
-        <div>
-          <p className="text-sm font-medium">{signal.label}</p>
-          <p className="text-xs text-muted-foreground">{signal.detail}</p>
-          {signal.recommendation && signal.status !== 'good' && (
-            <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
-              Next step: {signal.recommendation}
-            </p>
-          )}
-          {signal.source === 'analysis_config' && (
-            <Badge variant="outline" className="mt-1 text-[10px]">
-              Analysis Config
-            </Badge>
-          )}
-          {failures.length > 0 && (
-            <ul className="mt-1 space-y-0.5">
-              {failures.map((f, i) => (
-                <li key={`${f.rule_id}-${i}`} className="text-xs text-destructive">
-                  Failed policy: {f.message}
-                  {f.policy_name ? ` (${f.policy_name})` : ''}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-      <div className="text-right shrink-0">
-        <p className="text-sm font-medium">{signal.value}</p>
-        <p className="text-xs text-muted-foreground">{signal.score}/100</p>
-      </div>
-    </div>
-  )
-}
-
 export default function ReadinessPanel({ repoId, repoStatus, canManage = false }: ReadinessPanelProps) {
   const router = useRouter()
   const [readiness, setReadiness] = useState<ReadinessData | null>(null)
@@ -142,6 +75,7 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [creatingFix, setCreatingFix] = useState(false)
   const [selectedPlaybook, setSelectedPlaybook] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -187,13 +121,15 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
     }
   }
 
-  const startPlan = async () => {
-    setCreating(true)
+  const startPlan = async (planType: 'modernize' | 'fix' = 'modernize') => {
+    const setBusy = planType === 'fix' ? setCreatingFix : setCreating
+    setBusy(true)
     setError(null)
     try {
       const res = await apiClient.post('/api/v1/modernize/plans', {
         repository_id: repoId,
         playbook_id: selectedPlaybook || undefined,
+        plan_type: planType,
       })
       router.push(`/dashboard/modernize/plans/${res.data.id}`)
     } catch (err: unknown) {
@@ -203,7 +139,7 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
           : null
       setError(detail || 'Failed to create plan')
     } finally {
-      setCreating(false)
+      setBusy(false)
     }
   }
 
@@ -215,10 +151,10 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <div>
-            <CardTitle className="text-base">Modernization readiness</CardTitle>
+            <CardTitle className="text-base">Repository readiness</CardTitle>
             <CardDescription>
-              Manual assessment from Analysis Config signals, wiki metadata, and policies.
-              Run assessment adds narrative + agent-effort (not on page browse).
+              Signals show how ready this repo is for a <strong>fix plan</strong> (same-repo PR) or
+              a <strong>modernize plan</strong> (architecture-led targets).
             </CardDescription>
           </div>
           <Button variant="ghost" size="icon" onClick={load} disabled={loading} aria-label="Reload stored">
@@ -226,7 +162,7 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {loading ? (
           <Skeleton className="h-32 w-full" />
         ) : error ? (
@@ -257,13 +193,15 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-3xl font-bold">{readiness.overall_score}</span>
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 p-4">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold tabular-nums">{readiness.overall_score}</span>
+                    <span className="text-sm text-muted-foreground">/ 100</span>
+                  </div>
                   <Badge
-                    variant={LEVEL_VARIANT[readiness.readiness_level || ''] || 'outline'}
-                    className="capitalize"
+                    variant={READINESS_LEVEL_VARIANT[readiness.readiness_level || ''] || 'outline'}
                   >
-                    {readiness.readiness_level} readiness
+                    {formatReadinessLevel(readiness.readiness_level)}
                   </Badge>
                   {readiness.assessed_at && (
                     <span className="text-xs text-muted-foreground">
@@ -289,10 +227,11 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                   />
                 )}
 
-                <div className="divide-y rounded-md border px-3">
-                  {(readiness.signals || []).map((s) => (
-                    <SignalRow key={s.id} signal={s} />
-                  ))}
+                <div>
+                  <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Assessment signals
+                  </p>
+                  <ReadinessSignalsList signals={readiness.signals || []} />
                 </div>
 
                 {(readiness.policies_applied || []).length > 0 && (
@@ -312,7 +251,7 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                     <ul className="space-y-1">
                       {readiness.policy_gaps!.map((g, i) => (
                         <li key={`${g.rule_id}-${i}`} className="text-xs text-destructive">
-                          Failed policy: {g.message}
+                          {g.message}
                         </li>
                       ))}
                     </ul>
@@ -321,7 +260,7 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
 
                 {(readiness.existing_plans || []).length > 0 && (
                   <div>
-                    <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Active plans
                     </p>
                     <ul className="space-y-1">
@@ -337,6 +276,11 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                           <Badge variant="outline" className="ml-2 capitalize text-xs">
                             {p.state}
                           </Badge>
+                          {'plan_type' in p && p.plan_type && (
+                            <Badge variant="secondary" className="ml-1 capitalize text-xs">
+                              {String(p.plan_type)}
+                            </Badge>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -344,34 +288,82 @@ export default function ReadinessPanel({ repoId, repoStatus, canManage = false }
                 )}
 
                 {canManage && (
-                  <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end">
-                    {playbooks.length > 0 && (
-                      <div className="flex-1">
-                        <label className="mb-1 block text-xs text-muted-foreground">
-                          Playbook (optional)
-                        </label>
-                        <select
-                          value={selectedPlaybook}
-                          onChange={(e) => setSelectedPlaybook(e.target.value)}
-                          className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                        >
-                          <option value="">No playbook</option>
-                          {playbooks.map((pb) => (
-                            <option key={pb.id} value={pb.id}>
-                              {pb.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                  <div className="space-y-3 border-t pt-4">
+                    {readiness.recommendation_reason && (
+                      <p className="text-xs text-muted-foreground">
+                        {readiness.recommended_plan_type === 'fix' && (
+                          <Badge className="mr-2 bg-sky-600 hover:bg-sky-600">Prefer fix</Badge>
+                        )}
+                        {readiness.recommended_plan_type === 'modernize' && (
+                          <Badge className="mr-2">Prefer modernize</Badge>
+                        )}
+                        {readiness.recommended_plan_type === 'both' && (
+                          <Badge variant="outline" className="mr-2">
+                            Either works
+                          </Badge>
+                        )}
+                        {readiness.recommendation_reason}
+                      </p>
                     )}
-                    <Button onClick={startPlan} disabled={!ready || creating}>
-                      {creating ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Rocket className="h-4 w-4" />
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      {playbooks.length > 0 && (
+                        <div className="flex-1">
+                          <label className="mb-1 block text-xs text-muted-foreground">
+                            Playbook (optional)
+                          </label>
+                          <select
+                            value={selectedPlaybook}
+                            onChange={(e) => setSelectedPlaybook(e.target.value)}
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          >
+                            <option value="">No playbook</option>
+                            {playbooks.map((pb) => (
+                              <option key={pb.id} value={pb.id}>
+                                {pb.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       )}
-                      Start modernize plan
-                    </Button>
+                      <div className="flex flex-col gap-1">
+                        <Button
+                          onClick={() => startPlan('fix')}
+                          disabled={!ready || creatingFix}
+                          variant={
+                            readiness.recommended_plan_type === 'modernize' ? 'outline' : 'default'
+                          }
+                        >
+                          {creatingFix ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Rocket className="h-4 w-4" />
+                          )}
+                          Create fix plan
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          In-repo edits → PR on this repository
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Button
+                          onClick={() => startPlan('modernize')}
+                          disabled={!ready || creating}
+                          variant={
+                            readiness.recommended_plan_type === 'fix' ? 'outline' : 'default'
+                          }
+                        >
+                          {creating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Rocket className="h-4 w-4" />
+                          )}
+                          Create modernize plan
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          New target repos from architecture
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
               </>

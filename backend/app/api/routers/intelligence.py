@@ -352,7 +352,9 @@ async def get_wiki_site_html(
     site = WikiAgentService(db).get_wiki_site(repo_id)
     if not site or not site.html_content:
         raise HTTPException(status_code=404, detail="Wiki HTML not available")
-    return HTMLResponse(content=site.html_content)
+    from app.services.intelligence.wiki_html_repair import repair_wiki_site_html
+
+    return HTMLResponse(content=repair_wiki_site_html(site.html_content))
 
 
 @router.post("/repos/{repo_id}/chat")
@@ -1135,15 +1137,21 @@ async def application_wiki_site_html(
 
     live = render_live_application_wiki_html(db, user.tenant_id, application_id)
     if live:
-        return HTMLResponse(content=live)
+        from app.services.intelligence.wiki_html_repair import repair_wiki_site_html
+
+        return HTMLResponse(content=repair_wiki_site_html(live))
 
     if site and site.html_content:
-        return HTMLResponse(content=site.html_content)
+        from app.services.intelligence.wiki_html_repair import repair_wiki_site_html
+
+        return HTMLResponse(content=repair_wiki_site_html(site.html_content))
 
     html_doc = synthesize_application_wiki_html(db, user.tenant_id, application_id)
     if not html_doc:
         raise HTTPException(status_code=404, detail="Application not found")
-    return HTMLResponse(content=html_doc)
+    from app.services.intelligence.wiki_html_repair import repair_wiki_site_html
+
+    return HTMLResponse(content=repair_wiki_site_html(html_doc))
 
 
 @router.post("/tenant/chat")

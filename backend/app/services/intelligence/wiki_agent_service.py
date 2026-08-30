@@ -452,6 +452,16 @@ class WikiAgentService:
         )
         wiki_json["analysis_attributes"] = merged_attrs
 
+        from app.services.intelligence.wiki_html_repair import repair_wiki_site_html
+
+        if wiki_html:
+            wiki_html = repair_wiki_site_html(wiki_html)
+            state["wiki_html"] = wiki_html
+            try:
+                (analysis_dir / WIKI_HTML_NAME).write_text(wiki_html, encoding="utf-8")
+            except OSError:
+                pass
+
         self.analysis_svc.save_repository_attributes(
             repository.tenant_id,
             repository.id,

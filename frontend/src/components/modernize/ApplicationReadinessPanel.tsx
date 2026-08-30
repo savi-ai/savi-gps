@@ -2,29 +2,22 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import apiClient from '@/lib/axios'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertTriangle, CheckCircle2, Loader2, Play, RefreshCw } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Loader2, Play, RefreshCw, Rocket, ChevronDown, ChevronUp } from 'lucide-react'
 import AgentEffortCard, {
   type AgentEffort,
   type AssessmentSynthesis,
 } from '@/components/modernize/AgentEffortCard'
-
-interface ReadinessSignal {
-  id: string
-  label: string
-  value: string
-  score: number
-  status: string
-  detail: string
-  repository_id?: string
-  repository_name?: string
-  failed_policies?: Array<{ policy_name: string; message: string; rule_id: string }>
-}
+import ReadinessSignalsList, {
+  type ReadinessSignal,
+  READINESS_LEVEL_VARIANT,
+  formatReadinessLevel,
+} from '@/components/modernize/ReadinessSignalsList'
 
 interface RepoReadiness {
   repository_id: string
@@ -38,6 +31,15 @@ interface RepoReadiness {
   signals: ReadinessSignal[]
 }
 
+interface SignalGroup {
+  repository_id: string
+  repository_name: string
+  role?: string | null
+  signals: ReadinessSignal[]
+  scorable_count?: number
+  gap_count?: number
+}
+
 interface ApplicationReadiness {
   assessed?: boolean
   assessed_at?: string
@@ -47,6 +49,7 @@ interface ApplicationReadiness {
   overall_score?: number
   readiness_level?: string
   signals: ReadinessSignal[]
+  signal_groups?: SignalGroup[]
   repositories: RepoReadiness[]
   policy_gaps?: Array<{ message: string; policy_name: string; signal_id: string }>
   policies_applied?: Array<{ policy_name: string; version_number: string }>
@@ -54,24 +57,55 @@ interface ApplicationReadiness {
   agent_effort?: AgentEffort
 }
 
-const LEVEL_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  high: 'default',
-  medium: 'secondary',
-  low: 'destructive',
-}
-
 interface ApplicationReadinessPanelProps {
   applicationId: string
   canManage?: boolean
+}
+
+function RepoSignalGroup({ group }: { group: SignalGroup }) {
+  const [open, setOpen] = useState(true)
+  const gapCount = group.gap_count ?? 0
+
+  return (
+    <div className="rounded-md border">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/30"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div>
+          <p className="text-sm font-medium">{group.repository_name}</p>
+          {group.role && (
+            <p className="text-xs capitalize text-muted-foreground">{group.role}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {gapCount > 0 && (
+            <Badge variant="secondary" className="text-[10px]">
+              {gapCount} gap{gapCount === 1 ? '' : 's'}
+            </Badge>
+          )}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </div>
+      </button>
+      {open && (
+        <div className="border-t px-1 pb-2">
+          <ReadinessSignalsList signals={group.signals} hideNotApplicable />
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function ApplicationReadinessPanel({
   applicationId,
   canManage = true,
 }: ApplicationReadinessPanelProps) {
+  const router = useRouter()
   const [data, setData] = useState<ApplicationReadiness | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -107,6 +141,30 @@ export default function ApplicationReadinessPanel({
     }
   }
 
+  const createModernizePlan = async () => {
+    setCreating(true)
+    setError(null)
+    try {
+      const res = await apiClient.post(`/api/v1/modernize/applications/${applicationId}/plans`, {
+        per_repository: false,
+      })
+      const planId = res.data?.plan?.id || res.data?.plans?.[0]?.id
+      if (planId) {
+        router.push(`/dashboard/modernize/plans/${planId}`)
+      } else {
+        setError('Plan created but id missing')
+      }
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(detail || 'Failed to create modernization plan')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   if (loading) return <Skeleton className="h-48 w-full" />
   if (error && !data) {
     return <p className="text-sm text-destructive">{error}</p>
@@ -116,6 +174,8 @@ export default function ApplicationReadinessPanel({
   }
 
   const assessed = Boolean(data.assessed)
+  const signalGroups = data.signal_groups || []
+  const topGaps = (data.signals || []).filter((s) => s.status === 'bad' || s.status === 'warn')
 
   return (
     <div className="space-y-4">
@@ -123,15 +183,16 @@ export default function ApplicationReadinessPanel({
         <CardHeader>
           <CardTitle className="text-base">Application readiness</CardTitle>
           <CardDescription>
-            Assesses all member repositories, then rolls up application score (worst-repo level)
+            Assesses all member repositories and rolls up score and gaps across the application.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           {error && <p className="text-sm text-destructive">{error}</p>}
           {!assessed ? (
             <div className="space-y-3 rounded-md border border-dashed p-4">
               <p className="text-sm text-muted-foreground">
-                {data.message || 'No application assessment yet. Run assessment to score all member repos.'}
+                {data.message ||
+                  'No application assessment yet. Run assessment to score all member repos.'}
               </p>
               {canManage && (
                 <Button onClick={runAssessment} disabled={running}>
@@ -145,107 +206,71 @@ export default function ApplicationReadinessPanel({
               )}
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-3xl font-bold tabular-nums">{data.overall_score}</span>
-              <Badge
-                variant={LEVEL_VARIANT[data.readiness_level || ''] || 'outline'}
-                className="capitalize"
-              >
-                {data.readiness_level}
-              </Badge>
-              {data.assessed_at && (
-                <span className="text-xs text-muted-foreground">
-                  Assessed {new Date(data.assessed_at).toLocaleString()}
-                </span>
-              )}
-              <Button variant="outline" size="sm" onClick={runAssessment} disabled={running}>
-                {running ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
+            <>
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 p-4">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold tabular-nums">{data.overall_score}</span>
+                  <span className="text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <Badge variant={READINESS_LEVEL_VARIANT[data.readiness_level || ''] || 'outline'}>
+                  {formatReadinessLevel(data.readiness_level)}
+                </Badge>
+                {data.assessed_at && (
+                  <span className="text-xs text-muted-foreground">
+                    Assessed {new Date(data.assessed_at).toLocaleString()}
+                  </span>
                 )}
-                Re-run assessment
-              </Button>
-              <Button variant="ghost" size="sm" onClick={load}>
-                <RefreshCw className="h-4 w-4" />
-                Reload stored
-              </Button>
-            </div>
-          )}
-          {assessed && (data.synthesis || data.agent_effort) && (
-            <AgentEffortCard synthesis={data.synthesis} effort={data.agent_effort} />
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={runAssessment} disabled={running}>
+                    {running ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                    Re-run assessment
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={load}>
+                    <RefreshCw className="h-4 w-4" />
+                    Reload
+                  </Button>
+                </div>
+              </div>
+
+              {canManage && (
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <Button size="sm" onClick={() => void createModernizePlan()} disabled={creating}>
+                      {creating ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Rocket className="h-4 w-4" />
+                      )}
+                      Create modernize plan
+                    </Button>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Architecture defines new target repos — not in-place member fixes
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    For same-repo PRs, open a member repository and use{' '}
+                    <strong>Create fix plan</strong>.
+                  </p>
+                </div>
+              )}
+
+              {(data.synthesis || data.agent_effort) && (
+                <AgentEffortCard synthesis={data.synthesis} effort={data.agent_effort} />
+              )}
+            </>
           )}
         </CardContent>
       </Card>
 
-      {assessed && data.signals.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Cross-repo signals</CardTitle>
-            <CardDescription>Worst signal per category across members</CardDescription>
-          </CardHeader>
-          <CardContent className="divide-y">
-            {data.signals.map((sig) => {
-              const Icon = sig.status === 'good' ? CheckCircle2 : AlertTriangle
-              const iconClass =
-                sig.status === 'good'
-                  ? 'text-emerald-600'
-                  : sig.status === 'bad'
-                    ? 'text-destructive'
-                    : 'text-amber-600'
-              return (
-                <div key={sig.id} className="flex items-start justify-between gap-3 py-3 first:pt-0">
-                  <div className="flex items-start gap-2">
-                    <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', iconClass)} />
-                    <div>
-                      <p className="text-sm font-medium">{sig.label}</p>
-                      <p className="text-xs text-muted-foreground">{sig.detail}</p>
-                      {(sig.failed_policies || []).map((f, i) => (
-                        <p key={i} className="mt-0.5 text-xs text-destructive">
-                          Failed policy: {f.message}
-                        </p>
-                      ))}
-                      {sig.repository_name && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          From {sig.repository_name}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-medium">{sig.value}</p>
-                    <p className="text-xs text-muted-foreground">{sig.score}/100</p>
-                  </div>
-                </div>
-              )
-            })}
-          </CardContent>
-        </Card>
-      )}
-
-      {assessed && (data.policy_gaps || []).length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base text-destructive">Policy gaps</CardTitle>
-            <CardDescription>Failures against tenant modernization policies</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-1">
-              {data.policy_gaps!.map((g, i) => (
-                <li key={i} className="text-xs text-destructive">
-                  Failed policy: {g.message}
-                  {g.policy_name ? ` (${g.policy_name})` : ''}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
       {assessed && data.repositories.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Per-repository breakdown</CardTitle>
+            <CardTitle className="text-base">Member repositories</CardTitle>
+            <CardDescription>Per-repo readiness scores — open a repo for fix plans</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="divide-y rounded-md border">
@@ -278,14 +303,62 @@ export default function ApplicationReadinessPanel({
                       <>
                         <span className="text-sm tabular-nums">{repo.overall_score}/100</span>
                         <Badge
-                          variant={LEVEL_VARIANT[repo.readiness_level || 'medium'] || 'outline'}
-                          className="capitalize"
+                          variant={
+                            READINESS_LEVEL_VARIANT[repo.readiness_level || 'partial'] || 'outline'
+                          }
                         >
-                          {repo.readiness_level}
+                          {formatReadinessLevel(repo.readiness_level)}
                         </Badge>
                       </>
                     )}
                   </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {assessed && signalGroups.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Signals by repository</CardTitle>
+            <CardDescription>
+              Only checks that apply to each repo&apos;s stack — irrelevant runtime signals are hidden
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {signalGroups.map((group) => (
+              <RepoSignalGroup key={group.repository_id} group={group} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {assessed && topGaps.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Top gaps across application</CardTitle>
+            <CardDescription>Worst applicable signals from member repositories</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ReadinessSignalsList signals={topGaps.slice(0, 8)} showRepo hideNotApplicable />
+          </CardContent>
+        </Card>
+      )}
+
+      {assessed && (data.policy_gaps || []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-destructive">Policy gaps</CardTitle>
+            <CardDescription>Failures against tenant modernization policies</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1">
+              {data.policy_gaps!.map((g, i) => (
+                <li key={i} className="text-xs text-destructive">
+                  {g.message}
+                  {g.policy_name ? ` (${g.policy_name})` : ''}
                 </li>
               ))}
             </ul>

@@ -2,6 +2,18 @@ Analyze the repository source code at the clone path provided.
 
 Goal: Create comprehensive Wiki/documentation in HTML format from the actual code.
 
+DISCOVERY DISCIPLINE (adapted from OpenWiki):
+- Document domains, workflows, and architecture — not a raw file inventory or directory tree.
+- Prefer targeted reads: entrypoints, routers/controllers, services/managers, config, tests, README/docs.
+- Do not exhaustively read every file. Build an accurate first-pass wiki; it can be refined on later runs.
+- Prefer implementation files (*Impl, *Service, *Manager, handlers, use-cases) over interfaces and stubs.
+- Summarize existing README/docs when useful; do not duplicate them wholesale. If docs conflict with code, prefer code and note the conflict.
+- Use git (log, show, blame) on important entrypoints when it helps explain WHY code exists — focus on recent, high-signal history.
+
+SECURITY:
+- Do not read, cite, or document .env files, private keys, tokens, or live secrets.
+- .env.example and sample configs are OK only when they contain placeholders, not real credentials.
+
 HTML sections (include whatever applies — do not hallucinate missing features):
 - Overview
 - Core / System Architecture (high-level + component diagrams via Mermaid)
@@ -21,6 +33,20 @@ STYLE REFERENCE: Match the layout and quality of app/scripts/sample.html:
 - Professional typography and section anchors
 - Adapt sections to the project — not every sample section is required
 
+DIAGRAM DISCIPLINE:
+- Ground every diagram node/edge in inspected source — do not invent participants or relationships.
+- sequenceDiagram: HTTP/RPC request flows and call sequences
+- erDiagram: persistence / entity relationships
+- flowchart: branching control flow or deployment topology
+- Prefer a few accurate diagrams over decorating every page
+- If a flow is clearer as a diagram than prose alone, include Mermaid
+
+SECTION QUALITY:
+- Each major section needs substantive prose (multiple paragraphs or structured lists) — not one-liner stubs.
+- Organize by domain and workflow, not by folder listing.
+- If evidence is missing for an area, say "Not detected" or defer with a one-line backlog note — never invent features.
+- Business Logic detail belongs in Business Logic Layer; Architecture should summarize layers/flows and link to BL for operation detail.
+
 *** DEEP WIKI PARITY REQUIRED ***
 
 IMPORTANT: You MUST include a detailed "Business Logic Layer" section.
@@ -36,6 +62,8 @@ For each Core Component (e.g. BankManager, OrderService, IndexerService), extrac
 2. Business Rules — hardcoded rules, config constants, validations, defaults.
    Example: "New customers receive a Checking account with INITIAL_BALANCE from AdminParameters."
 
+3. Relationships — what this component calls or depends on (other services, stores, external APIs), with evidence cites.
+
 Structure each component as:
 ### [Component Name]
 - **Purpose**: ...
@@ -43,6 +71,7 @@ Structure each component as:
   - [Operation Name]: [Step 1] -> [Step 2] -> [Step 3]
 - **Business Rules**:
   - [Rule with file citation]
+- **Depends on**: [other components/systems with citations]
 
 If call_graph_context.md exists in the output directory, treat its CALL edges as verified static analysis when writing Business Logic Layer workflows (cite the provided file:line citations).
 

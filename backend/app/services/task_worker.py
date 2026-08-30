@@ -311,6 +311,33 @@ class TaskWorker:
                             'success': False,
                             'error': str(git_error)
                         }
+
+            elif task.task_type == TaskType.RUN_EXECUTION_STAGE:
+                from app.services.modernize.fix_stage_service import FixStageService
+                from app.services.modernize.modernize_stage_service import ModernizeStageService
+
+                plan_id = input_data.get("plan_id")
+                stage = input_data.get("stage")
+                plan_tenant = input_data.get("tenant_id") or tenant_id
+                plan_type = (input_data.get("plan_type") or "modernize").lower()
+                if not plan_id or not stage:
+                    raise ValueError("run_execution_stage requires plan_id and stage")
+                logger.info(
+                    "Executing %s stage %s for plan %s (task %s)",
+                    plan_type,
+                    stage,
+                    plan_id,
+                    task.id,
+                )
+                if plan_type == "fix":
+                    result = await FixStageService(db).execute_stage(plan_tenant, plan_id, stage)
+                else:
+                    result = await asyncio.to_thread(
+                        ModernizeStageService(db).execute_stage,
+                        plan_tenant,
+                        plan_id,
+                        stage,
+                    )
                 
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
@@ -348,6 +375,16 @@ class TaskWorker:
                     self.execute_task(task, db),
                     timeout=self.task_timeout
                 )
+
+                if isinstance(result, dict) and result.get("error") and not result.get("features"):
+                    error_msg = str(result["error"])
+                    task_service.update_task_status(
+                        task_id=task.id,
+                        status=TaskStatus.FAILED,
+                        error=error_msg,
+                    )
+                    logger.error(f"Task {task.id} failed: {error_msg}")
+                    return
                 
                 # Mark as completed
                 task_service.update_task_status(

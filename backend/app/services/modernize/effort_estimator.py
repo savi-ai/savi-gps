@@ -86,10 +86,16 @@ def estimate_agent_effort_heuristic(readiness: Dict[str, Any]) -> Dict[str, Any]
 
     # Base: lower readiness → more agent hours
     base = max(4.0, (100 - score) * 0.55)
-    bad = sum(1 for s in signals if s.get("status") == "bad")
-    warn = sum(1 for s in signals if s.get("status") == "warn")
+    bad = sum(
+        1 for s in signals if s.get("status") == "bad" and s.get("applicable", True)
+    )
+    warn = sum(
+        1 for s in signals if s.get("status") == "warn" and s.get("applicable", True)
+    )
     weight_penalty = 0.0
     for s in signals:
+        if not s.get("applicable", True) or s.get("status") == "na":
+            continue
         w = float(s.get("weight") or 1)
         if s.get("status") == "bad":
             weight_penalty += 2.5 * w
@@ -127,6 +133,10 @@ def estimate_agent_effort_heuristic(readiness: Dict[str, Any]) -> Dict[str, Any]
     return {
         "band": _band_for_hours(total),
         "estimated_agent_hours": total,
+        "purpose": (
+            "Estimated Savi agent orchestration time to run Requirements → Tasks → Code → "
+            "Test → Push if you create a modernization or fix plan."
+        ),
         "stage_breakdown": stages,
         "confidence": confidence,
         "assumptions": assumptions,
@@ -170,7 +180,9 @@ def _heuristic_narrative(readiness: Dict[str, Any]) -> Dict[str, Any]:
 
 def _compact_signals(signals: List[Dict[str, Any]], limit: int = 24) -> List[Dict[str, Any]]:
     out = []
-    for s in signals[:limit]:
+    for s in signals:
+        if not s.get("applicable", True) or s.get("status") == "na":
+            continue
         out.append(
             {
                 "id": s.get("id"),
@@ -182,6 +194,8 @@ def _compact_signals(signals: List[Dict[str, Any]], limit: int = 24) -> List[Dic
                 "weight": s.get("weight"),
             }
         )
+        if len(out) >= limit:
+            break
     return out
 
 

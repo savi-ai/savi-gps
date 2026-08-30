@@ -6,6 +6,35 @@ from app.core.logger import logger
 import json
 
 
+def _normalize_feature_dict(raw: dict) -> dict:
+    """Coerce LLM output into Feature schema (lists vs strings)."""
+
+    def as_str(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return "\n".join(str(item) for item in value if item is not None)
+        return str(value)
+
+    def as_str_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [line.strip() for line in value.splitlines() if line.strip()]
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None]
+        return [str(value)]
+
+    return {
+        "title": as_str(raw.get("title") or raw.get("name") or "Untitled Feature"),
+        "description": as_str(raw.get("description", "")),
+        "business_value": as_str(raw.get("business_value", "To be determined")),
+        "actors": as_str_list(raw.get("actors", [])),
+        "high_level_flow": as_str(raw.get("high_level_flow", "To be determined")),
+        "acceptance_criteria": as_str_list(raw.get("acceptance_criteria", [])),
+    }
+
+
 class FeatureAgent(BaseAgent):
     """Agent that creates normalized Feature objects"""
     
@@ -36,15 +65,7 @@ Output as JSON array of features.
                 features = []
                 for cf in candidate_features:
                     try:
-                        # Convert candidate feature to Feature model
-                        feature_dict = {
-                            "title": cf.get("title") or cf.get("name", "Untitled Feature"),
-                            "description": cf.get("description", ""),
-                            "business_value": cf.get("business_value", "To be determined"),
-                            "actors": cf.get("actors", []),
-                            "high_level_flow": cf.get("high_level_flow", "To be determined"),
-                            "acceptance_criteria": cf.get("acceptance_criteria", [])
-                        }
+                        feature_dict = _normalize_feature_dict(cf)
                         features.append(Feature(**feature_dict))
                     except Exception as e:
                         logger.warning(f"Error converting candidate feature: {e}")
@@ -66,15 +87,29 @@ Output as JSON array of features.
             logger.warning("No features or idea provided to FeatureAgent")
             return state
         
+        conversation_history = state.get("conversation_history") or []
+        conversation_snippet = ""
+        if conversation_history:
+            lines = []
+            for msg in conversation_history[-8:]:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "user")
+                    content = str(msg.get("content", ""))[:500]
+                    lines.append(f"{role}: {content}")
+            conversation_snippet = "\n".join(lines)
+
         prompt = f"""Create normalized feature definitions.
 
 Vision: {vision}
 
-Candidate Features: {json.dumps(candidate_features) if candidate_features else 'None - derive from idea'}
+Conversation context:
+{conversation_snippet or "(none)"}
+
+Candidate Features: {json.dumps(candidate_features) if candidate_features else 'None - derive from idea and conversation'}
 
 Original Idea: {idea}
 
-For each feature, create a structured definition with title, description, business value, actors, high-level flow, and acceptance criteria.
+For each feature, create a structured definition with title, description, business value, actors, high-level flow (string), and acceptance criteria (list of strings).
 """
         
         try:
@@ -100,17 +135,16 @@ For each feature, create a structured definition with title, description, busine
                 if isinstance(parsed, list):
                     for f in parsed:
                         if isinstance(f, dict):
-                            features.append(Feature(**f))
+                            features.append(Feature(**_normalize_feature_dict(f)))
                         else:
                             logger.warning(f"Invalid feature format: {f}")
                 elif isinstance(parsed, dict):
                     if "features" in parsed:
                         for f in parsed["features"]:
                             if isinstance(f, dict):
-                                features.append(Feature(**f))
+                                features.append(Feature(**_normalize_feature_dict(f)))
                     elif "title" in parsed or "description" in parsed:
-                        # Single feature object
-                        features.append(Feature(**parsed))
+                        features.append(Feature(**_normalize_feature_dict(parsed)))
                     else:
                         logger.warning(f"Unexpected response format: {parsed.keys()}")
             except (json.JSONDecodeError, TypeError) as e:

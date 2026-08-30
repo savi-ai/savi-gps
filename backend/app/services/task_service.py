@@ -24,6 +24,7 @@ class TaskType:
     GENERATE_ARCHITECTURE = "generate_architecture"
     GENERATE_CODE = "generate_code"
     GENERATE_TESTS = "generate_tests"
+    RUN_EXECUTION_STAGE = "run_execution_stage"
 
 
 class TaskService:

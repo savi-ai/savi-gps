@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import asyncio
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -302,8 +303,12 @@ class SaviCodingAgentAdapter:
                 ]
                 if brief_path:
                     argv.append(brief_path)
-                proc = subprocess.run(
-                    argv, capture_output=True, text=True, timeout=180
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
                 )
                 if proc.returncode != 0:
                     raise RuntimeError(
@@ -317,7 +322,13 @@ class SaviCodingAgentAdapter:
 
         prompt = self._plan_prompt(item, brief)
         argv = self._build_cli_argv(binary, prompt)
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
         if proc.returncode != 0:
             raise RuntimeError((proc.stderr or proc.stdout or f"{binary} failed")[:400])
         out = (proc.stdout or "").strip()
@@ -341,7 +352,8 @@ class SaviCodingAgentAdapter:
 
         impl_script = self._vendor_script("savi_implement.sh")
         if impl_script:
-            proc = subprocess.run(
+            proc = await asyncio.to_thread(
+                subprocess.run,
                 [
                     str(impl_script),
                     item.title or "Untitled",
@@ -362,7 +374,8 @@ class SaviCodingAgentAdapter:
 
         prompt = self._implement_prompt(item, short)
         argv = self._build_cli_argv(binary, prompt)
-        proc = subprocess.run(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             argv,
             cwd=str(sandbox.root),
             capture_output=True,

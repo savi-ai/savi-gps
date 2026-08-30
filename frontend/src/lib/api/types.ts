@@ -19,6 +19,7 @@ export interface BuildProject {
   target_audience?: string
   default_execution_mode?: string
   github_repo_url?: string
+  target_branch?: string
   conversation_history?: Array<{ role: string; content: string }>
   linked_repositories?: LinkedRepository[]
   source_application_id?: string | null
@@ -68,8 +69,10 @@ export interface ModernizationPlanSummary {
   state: string
   repository_id: string
   repository_name?: string
+  plan_type?: string
   spawned_project_id?: string | null
   updated_at?: string
+  can_delete?: boolean
 }
 
 export interface RepositoryConnectionsResponse {

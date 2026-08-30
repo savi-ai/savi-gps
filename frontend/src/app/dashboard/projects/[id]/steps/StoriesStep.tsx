@@ -132,14 +132,15 @@ export function StoriesStepContent({ project, canEdit, onUpdate, onStepChange }:
 
     try {
       setSubmitting(true)
-      // Update step to architecture
-      await apiClient.patch(`/api/v1/golden-path/projects/${project.id}/step?step=architecture`)
+      // Modernize Alpha: Tasks → Code. Build path historically jumped to architecture (stale).
+      const nextStep = project.pillar === 'modernize' ? 'developer' : 'developer'
+      await apiClient.patch(`/api/v1/golden-path/projects/${project.id}/step?step=${nextStep}`)
       onUpdate()
       if (onStepChange) {
-        onStepChange('architecture')
+        onStepChange(nextStep)
       }
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to submit for architecture')
+      alert(err.response?.data?.detail || 'Failed to continue to code')
     } finally {
       setSubmitting(false)
     }
@@ -150,7 +151,7 @@ export function StoriesStepContent({ project, canEdit, onUpdate, onStepChange }:
   return (
     <div className="step-panel">
       <div className="step-panel-header">
-        <h2>Story Agent - User Stories</h2>
+        <h2>{project.pillar === 'modernize' ? 'Tasks' : 'Story Agent - User Stories'}</h2>
         {!canEdit && <span className="read-only-indicator">Read Only</span>}
       </div>
       
@@ -325,7 +326,7 @@ export function StoriesStepContent({ project, canEdit, onUpdate, onStepChange }:
                 onClick={handleApproveAll}
                 disabled={submitting}
               >
-                {submitting ? 'Submitting...' : 'Approve and Submit for Architecture'}
+                {submitting ? 'Submitting...' : project.pillar === 'modernize' ? 'Approve and Continue to Code' : 'Approve and Continue to Implementation'}
               </button>
             </div>
           )}
